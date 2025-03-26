@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
-import { Layout, Menu } from 'antd';
-import { Outlet, useNavigate } from 'react-router-dom';
+import { Layout, Menu, Button, theme } from 'antd';
+import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
-  ClusterOutlined,
   DashboardOutlined,
+  ClusterOutlined,
   SettingOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
 } from '@ant-design/icons';
 
 const { Header, Sider, Content } = Layout;
@@ -12,6 +14,10 @@ const { Header, Sider, Content } = Layout;
 const MainLayout: React.FC = () => {
   const [collapsed, setCollapsed] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
+  const {
+    token: { colorBgContainer, borderRadiusLG },
+  } = theme.useToken();
 
   const menuItems = [
     {
@@ -31,26 +37,56 @@ const MainLayout: React.FC = () => {
     },
   ];
 
+  const handleMenuClick = ({ key }: { key: string }) => {
+    navigate(key);
+  };
+
   return (
     <Layout style={{ minHeight: '100vh' }}>
       <Sider 
+        trigger={null} 
         collapsible 
-        collapsed={collapsed} 
-        onCollapse={(value) => setCollapsed(value)}
-        theme="light"
+        collapsed={collapsed}
+        style={{
+          overflow: 'auto',
+          height: '100vh',
+          position: 'fixed',
+          left: 0,
+          top: 0,
+          bottom: 0,
+        }}
       >
-        <div style={{ height: 32, margin: 16, background: 'rgba(0, 0, 0, 0.2)' }} />
+        <div style={{ height: 32, margin: 16, background: 'rgba(255, 255, 255, 0.2)' }} />
         <Menu
-          theme="light"
-          defaultSelectedKeys={['/']}
+          theme="dark"
           mode="inline"
+          selectedKeys={[location.pathname]}
           items={menuItems}
-          onClick={({ key }) => navigate(key)}
+          onClick={handleMenuClick}
         />
       </Sider>
-      <Layout>
-        <Header style={{ padding: 0, background: '#fff' }} />
-        <Content style={{ margin: '24px 16px', padding: 24, background: '#fff' }}>
+      <Layout style={{ marginLeft: collapsed ? 80 : 200, transition: 'all 0.2s' }}>
+        <Header style={{ padding: 0, background: colorBgContainer }}>
+          <Button
+            type="text"
+            icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+            onClick={() => setCollapsed(!collapsed)}
+            style={{
+              fontSize: '16px',
+              width: 64,
+              height: 64,
+            }}
+          />
+        </Header>
+        <Content
+          style={{
+            margin: '24px 16px',
+            padding: 24,
+            background: colorBgContainer,
+            borderRadius: borderRadiusLG,
+            minHeight: 280,
+          }}
+        >
           <Outlet />
         </Content>
       </Layout>

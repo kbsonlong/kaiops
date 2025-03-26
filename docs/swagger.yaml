@@ -88,6 +88,40 @@ definitions:
         example: 10.96.0.0/12
         type: string
     type: object
+  v1.Taint:
+    properties:
+      effect:
+        allOf:
+        - $ref: '#/definitions/v1.TaintEffect'
+        description: |-
+          Required. The effect of the taint on pods
+          that do not tolerate the taint.
+          Valid effects are NoSchedule, PreferNoSchedule and NoExecute.
+      key:
+        description: Required. The taint key to be applied to a node.
+        type: string
+      timeAdded:
+        description: |-
+          TimeAdded represents the time at which the taint was added.
+          It is only written for NoExecute taints.
+          +optional
+        type: string
+      value:
+        description: |-
+          The taint value corresponding to the taint key.
+          +optional
+        type: string
+    type: object
+  v1.TaintEffect:
+    enum:
+    - NoSchedule
+    - PreferNoSchedule
+    - NoExecute
+    type: string
+    x-enum-varnames:
+    - TaintEffectNoSchedule
+    - TaintEffectPreferNoSchedule
+    - TaintEffectNoExecute
 info:
   contact: {}
 paths:
@@ -308,6 +342,204 @@ paths:
               type: string
             type: object
       summary: 获取集群节点状态
+      tags:
+      - clusters
+  /api/v1/clusters/{id}/nodes/{nodeName}/labels:
+    patch:
+      consumes:
+      - application/json
+      description: 更新指定集群中特定节点的标签
+      parameters:
+      - description: 集群ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 节点名称
+        in: path
+        name: nodeName
+        required: true
+        type: string
+      - description: 节点标签
+        in: body
+        name: labels
+        required: true
+        schema:
+          additionalProperties:
+            type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: 更新成功
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: 请求参数错误
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: 集群不存在
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: 服务器内部错误
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: 更新节点标签
+      tags:
+      - clusters
+  /api/v1/clusters/{id}/nodes/{nodeName}/labels/{labelKey}:
+    delete:
+      consumes:
+      - application/json
+      description: 删除指定集群中特定节点的指定标签
+      parameters:
+      - description: 集群ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 节点名称
+        in: path
+        name: nodeName
+        required: true
+        type: string
+      - description: 标签键
+        in: path
+        name: labelKey
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 删除成功
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: 集群不存在
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: 服务器内部错误
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: 删除节点标签
+      tags:
+      - clusters
+  /api/v1/clusters/{id}/nodes/{nodeName}/taints:
+    patch:
+      consumes:
+      - application/json
+      description: 更新指定集群中特定节点的污点
+      parameters:
+      - description: 集群ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 节点名称
+        in: path
+        name: nodeName
+        required: true
+        type: string
+      - description: 节点污点
+        in: body
+        name: taints
+        required: true
+        schema:
+          items:
+            $ref: '#/definitions/v1.Taint'
+          type: array
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: 请求参数错误
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: 集群不存在
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: 服务器内部错误
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: 更新节点污点
+      tags:
+      - clusters
+  /api/v1/clusters/{id}/nodes/{nodeName}/taints/{taintKey}:
+    delete:
+      consumes:
+      - application/json
+      description: 删除指定集群中特定节点的指定污点
+      parameters:
+      - description: 集群ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 节点名称
+        in: path
+        name: nodeName
+        required: true
+        type: string
+      - description: 污点键
+        in: path
+        name: taintKey
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 删除成功
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: 集群不存在
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: 服务器内部错误
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: 删除节点污点
       tags:
       - clusters
 swagger: "2.0"

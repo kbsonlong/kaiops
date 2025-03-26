@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -198,6 +199,50 @@ func (c *ClusterController) DeleteCluster(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"message": "集群删除成功"})
 }
 
+// getKubernetesClient 获取 Kubernetes 客户端
+func (c *ClusterController) getKubernetesClient(ctx *gin.Context, clusterID string) (*kubernetes.Clientset, error) {
+	// 获取集群信息
+	var cluster models.Cluster
+	if err := c.DB.First(&cluster, clusterID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "集群不存在"})
+			return nil, err
+		}
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return nil, err
+	}
+
+	// 解码 base64 编码的 kubeconfig
+	kubeconfigBytes, err := base64.StdEncoding.DecodeString(cluster.KubeConfig)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "kubeconfig 解码失败"})
+		return nil, err
+	}
+
+	// 创建临时 kubeconfig 文件
+	tmpKubeconfig := fmt.Sprintf("%s/.kube/config_%d", homedir.HomeDir(), cluster.ID)
+	if err := os.WriteFile(tmpKubeconfig, kubeconfigBytes, 0600); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "创建临时 kubeconfig 文件失败"})
+		return nil, err
+	}
+	defer os.Remove(tmpKubeconfig)
+
+	// 创建 kubernetes 客户端
+	config, err := clientcmd.BuildConfigFromFlags("", tmpKubeconfig)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "创建 kubernetes 配置失败"})
+		return nil, err
+	}
+
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "创建 kubernetes 客户端失败"})
+		return nil, err
+	}
+
+	return clientset, nil
+}
+
 // GetClusterNodes godoc
 // @Summary      获取集群节点状态
 // @Description  通过 kubeconfig 获取集群的 WorkNode 节点状态
@@ -211,42 +256,9 @@ func (c *ClusterController) DeleteCluster(ctx *gin.Context) {
 // @Router       /api/v1/clusters/{id}/nodes [get]
 func (c *ClusterController) GetClusterNodes(ctx *gin.Context) {
 	id := ctx.Param("id")
-	var cluster models.Cluster
 
-	if err := c.DB.First(&cluster, id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			ctx.JSON(http.StatusNotFound, gin.H{"error": "集群不存在"})
-			return
-		}
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	// 解码 base64 编码的 kubeconfig
-	kubeconfigBytes, err := base64.StdEncoding.DecodeString(cluster.KubeConfig)
+	clientset, err := c.getKubernetesClient(ctx, id)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "kubeconfig 解码失败"})
-		return
-	}
-
-	// 创建临时 kubeconfig 文件
-	tmpKubeconfig := fmt.Sprintf("%s/.kube/config_%d", homedir.HomeDir(), cluster.ID)
-	if err := os.WriteFile(tmpKubeconfig, kubeconfigBytes, 0600); err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "创建临时 kubeconfig 文件失败"})
-		return
-	}
-	defer os.Remove(tmpKubeconfig)
-
-	// 创建 kubernetes 客户端
-	config, err := clientcmd.BuildConfigFromFlags("", tmpKubeconfig)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "创建 kubernetes 配置失败"})
-		return
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "创建 kubernetes 客户端失败"})
 		return
 	}
 
@@ -257,42 +269,192 @@ func (c *ClusterController) GetClusterNodes(ctx *gin.Context) {
 		return
 	}
 
-	// 处理节点信息
-	var nodeList []map[string]interface{}
-	for _, node := range nodes.Items {
-		nodeInfo := map[string]interface{}{
-			"name":   node.Name,
-			"labels": node.Labels,
-			"status": map[string]interface{}{
-				"ready":      false,
-				"conditions": []map[string]interface{}{},
-			},
-		}
+	ctx.JSON(http.StatusOK, gin.H{
+		"nodes": nodes,
+	})
+}
 
-		// 获取节点状态
-		for _, condition := range node.Status.Conditions {
-			if condition.Type == "Ready" {
-				nodeInfo["status"].(map[string]interface{})["ready"] = condition.Status == "True"
-			}
-			nodeInfo["status"].(map[string]interface{})["conditions"] = append(
-				nodeInfo["status"].(map[string]interface{})["conditions"].([]map[string]interface{}),
-				map[string]interface{}{
-					"type":    condition.Type,
-					"status":  condition.Status,
-					"message": condition.Message,
-				},
-			)
-		}
+// UpdateNodeLabels godoc
+// @Summary      更新节点标签
+// @Description  更新指定集群中特定节点的标签
+// @Tags         clusters
+// @Accept       json
+// @Produce      json
+// @Param        id path int true "集群ID"
+// @Param        nodeName path string true "节点名称"
+// @Param        labels body map[string]string true "节点标签"
+// @Success      204 {object} map[string]string "更新成功"
+// @Failure      400 {object} map[string]string "请求参数错误"
+// @Failure      404 {object} map[string]string "集群不存在"
+// @Failure      500 {object} map[string]string "服务器内部错误"
+// @Router       /api/v1/clusters/{id}/nodes/{nodeName}/labels [patch]
+func (c *ClusterController) UpdateNodeLabels(ctx *gin.Context) {
+	id := ctx.Param("id")
+	nodeName := ctx.Param("nodeName")
+	fmt.Print(id, nodeName)
 
-		// 获取节点资源信息
-		nodeInfo["labels"] = node.ObjectMeta.Labels
-		nodeInfo["capacity"] = node.Status.Capacity
-		nodeInfo["allocatable"] = node.Status.Allocatable
-
-		nodeList = append(nodeList, nodeInfo)
+	var labels map[string]string
+	if err := ctx.ShouldBindJSON(&labels); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{
-		"nodes": nodeList,
-	})
+	clientset, err := c.getKubernetesClient(ctx, id)
+	if err != nil {
+		return
+	}
+
+	// 获取节点
+	node, err := clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取节点失败"})
+		return
+	}
+
+	// 更新标签
+	fmt.Println(labels)
+	node.Labels = labels
+	_, err = clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "更新节点标签失败"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"message": "节点标签更新成功"})
+}
+
+// DeleteNodeLabel godoc
+// @Summary      删除节点标签
+// @Description  删除指定集群中特定节点的指定标签
+// @Tags         clusters
+// @Accept       json
+// @Produce      json
+// @Param        id path int true "集群ID"
+// @Param        nodeName path string true "节点名称"
+// @Param        labelKey path string true "标签键"
+// @Success      200 {object} map[string]string "删除成功"
+// @Failure      404 {object} map[string]string "集群不存在"
+// @Failure      500 {object} map[string]string "服务器内部错误"
+// @Router       /api/v1/clusters/{id}/nodes/{nodeName}/labels/{labelKey} [delete]
+func (c *ClusterController) DeleteNodeLabel(ctx *gin.Context) {
+	id := ctx.Param("id")
+	nodeName := ctx.Param("nodeName")
+	labelKey := ctx.Param("labelKey")
+
+	clientset, err := c.getKubernetesClient(ctx, id)
+	if err != nil {
+		return
+	}
+
+	// 获取节点
+	node, err := clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取节点失败"})
+		return
+	}
+
+	// 删除标签
+	delete(node.Labels, labelKey)
+	_, err = clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "删除节点标签失败"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"message": "节点标签删除成功"})
+}
+
+// UpdateNodeTaints godoc
+// @Summary      更新节点污点
+// @Description  更新指定集群中特定节点的污点
+// @Tags         clusters
+// @Accept       json
+// @Produce      json
+// @Param        id path int true "集群ID"
+// @Param        nodeName path string true "节点名称"
+// @Param        taints body []corev1.Taint true "节点污点"
+// @Success      200 {object} map[string]string "更新成功"
+// @Failure      400 {object} map[string]string "请求参数错误"
+// @Failure      404 {object} map[string]string "集群不存在"
+// @Failure      500 {object} map[string]string "服务器内部错误"
+// @Router       /api/v1/clusters/{id}/nodes/{nodeName}/taints [patch]
+func (c *ClusterController) UpdateNodeTaints(ctx *gin.Context) {
+	id := ctx.Param("id")
+	nodeName := ctx.Param("nodeName")
+
+	var taints []corev1.Taint
+	if err := ctx.ShouldBindJSON(&taints); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	clientset, err := c.getKubernetesClient(ctx, id)
+	if err != nil {
+		return
+	}
+
+	// 获取节点
+	node, err := clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取节点失败"})
+		return
+	}
+
+	// 更新污点
+	node.Spec.Taints = taints
+	_, err = clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "更新节点污点失败"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"message": "节点污点更新成功"})
+}
+
+// DeleteNodeTaint godoc
+// @Summary      删除节点污点
+// @Description  删除指定集群中特定节点的指定污点
+// @Tags         clusters
+// @Accept       json
+// @Produce      json
+// @Param        id path int true "集群ID"
+// @Param        nodeName path string true "节点名称"
+// @Param        taintKey path string true "污点键"
+// @Success      200 {object} map[string]string "删除成功"
+// @Failure      404 {object} map[string]string "集群不存在"
+// @Failure      500 {object} map[string]string "服务器内部错误"
+// @Router       /api/v1/clusters/{id}/nodes/{nodeName}/taints/{taintKey} [delete]
+func (c *ClusterController) DeleteNodeTaint(ctx *gin.Context) {
+	id := ctx.Param("id")
+	nodeName := ctx.Param("nodeName")
+	taintKey := ctx.Param("taintKey")
+
+	clientset, err := c.getKubernetesClient(ctx, id)
+	if err != nil {
+		return
+	}
+
+	// 获取节点
+	node, err := clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取节点失败"})
+		return
+	}
+
+	// 删除污点
+	newTaints := make([]corev1.Taint, 0)
+	for _, taint := range node.Spec.Taints {
+		if taint.Key != taintKey {
+			newTaints = append(newTaints, taint)
+		}
+	}
+	node.Spec.Taints = newTaints
+
+	_, err = clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "删除节点污点失败"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"message": "节点污点删除成功"})
 }

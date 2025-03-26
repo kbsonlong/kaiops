@@ -24,20 +24,58 @@ export interface Cluster {
 }
 
 export interface NodeInfo {
-  name: string;
-  labels: Record<string, string>;
+  metadata: {
+    name: string;
+    labels: {
+      [key: string]: string;
+    };
+  };
+  spec: {
+    providerID: string;
+    taints?: Array<{
+      key: string;
+      value: string;
+      effect: 'NoSchedule' | 'PreferNoSchedule' | 'NoExecute';
+    }>;
+  };
   status: {
-    ready: boolean;
+    capacity: {
+      cpu: string;
+      memory: string;
+      pods: string;
+      [key: string]: string;
+    };
+    allocatable: {
+      cpu: string;
+      memory: string;
+      pods: string;
+      [key: string]: string;
+    };
     conditions: Array<{
       type: string;
       status: string;
+      reason: string;
       message: string;
+      lastHeartbeatTime: string;
+      lastTransitionTime: string;
     }>;
+    addresses: Array<{
+      type: string;
+      address: string;
+    }>;
+    nodeInfo: {
+      architecture: string;
+      bootID: string;
+      containerRuntimeVersion: string;
+      kernelVersion: string;
+      kubeProxyVersion: string;
+      kubeletVersion: string;
+      machineID: string;
+      operatingSystem: string;
+      osImage: string;
+      systemUUID: string;
+    };
   };
-  capacity: Record<string, string>;
-  allocatable: Record<string, string>;
-  // 从 labels 中获取角色信息
-  getRole?: () => string;
 }
 
 interface ApiResponse<T> {
@@ -46,6 +84,15 @@ interface ApiResponse<T> {
     total: number;
     page: number;
     page_size: number;
+  };
+}
+
+interface NodesResponse {
+  nodes: {
+    metadata: {
+      resourceVersion: string;
+    };
+    items: NodeInfo[];
   };
 }
 
@@ -86,9 +133,38 @@ export const clusterService = {
   },
 
   // 获取集群节点状态
-  getClusterNodes: async (id: number): Promise<NodeInfo[]> => {
-    const response = await axios.get(`${API_BASE_URL}/clusters/${id}/nodes`);
-    // 从 response.data.nodes 中获取节点数组
-    return Array.isArray(response.data.nodes) ? response.data.nodes : [];
+  getClusterNodes: async (clusterId: number): Promise<NodeInfo[]> => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/clusters/${clusterId}/nodes`);
+      const nodesResponse: NodesResponse = response.data;
+      return nodesResponse.nodes.items || [];
+    } catch (error) {
+      console.error('Error fetching cluster nodes:', error);
+      throw error;
+    }
+  },
+
+  // 更新节点标签
+  updateNodeLabels: async (clusterId: number, nodeName: string, labels: { [key: string]: string }): Promise<void> => {
+    await axios.patch(`${API_BASE_URL}/clusters/${clusterId}/nodes/${nodeName}/labels`, { labels });
+  },
+
+  // 更新节点污点
+  updateNodeTaints: async (clusterId: number, nodeName: string, taints: Array<{
+    key: string;
+    value: string;
+    effect: 'NoSchedule' | 'PreferNoSchedule' | 'NoExecute';
+  }>): Promise<void> => {
+    await axios.patch(`${API_BASE_URL}/clusters/${clusterId}/nodes/${nodeName}/taints`, { taints });
+  },
+
+  // 删除节点标签
+  deleteNodeLabel: async (clusterId: number, nodeName: string, labelKey: string): Promise<void> => {
+    await axios.delete(`${API_BASE_URL}/clusters/${clusterId}/nodes/${nodeName}/labels/${labelKey}`);
+  },
+
+  // 删除节点污点
+  deleteNodeTaint: async (clusterId: number, nodeName: string, taintKey: string): Promise<void> => {
+    await axios.delete(`${API_BASE_URL}/clusters/${clusterId}/nodes/${nodeName}/taints/${taintKey}`);
   },
 }; 

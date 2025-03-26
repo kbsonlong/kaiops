@@ -1,13 +1,24 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Card, Table, Tag, Descriptions, message } from 'antd';
+import { Card, Table, Tag, Descriptions, message, Button, Modal, Form, Input, Select, Space, Drawer, Typography } from 'antd';
+import { PlusOutlined, DeleteOutlined, TagsOutlined, WarningOutlined } from '@ant-design/icons';
 import { clusterService, NodeInfo, Cluster } from '../services/cluster';
+
+const { Option } = Select;
+const { Text } = Typography;
 
 const ClusterNodes: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [nodes, setNodes] = useState<NodeInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [clusterInfo, setClusterInfo] = useState<Cluster | null>(null);
+  const [labelModalVisible, setLabelModalVisible] = useState(false);
+  const [taintModalVisible, setTaintModalVisible] = useState(false);
+  const [selectedNode, setSelectedNode] = useState<NodeInfo | null>(null);
+  const [labelForm] = Form.useForm();
+  const [taintForm] = Form.useForm();
+  const [detailDrawerVisible, setDetailDrawerVisible] = useState(false);
+  const [detailType, setDetailType] = useState<'labels' | 'taints'>('labels');
 
   const fetchData = async () => {
     if (!id) return;
@@ -18,12 +29,8 @@ const ClusterNodes: React.FC = () => {
         clusterService.getCluster(parseInt(id))
       ]);
       
-      // 确保 nodesResponse 是数组
-      const nodesData = Array.isArray(nodesResponse) ? nodesResponse : [];
       console.log('Nodes Response:', nodesResponse);
-      console.log('Processed Nodes:', nodesData);
-      
-      setNodes(nodesData);
+      setNodes(nodesResponse);
       setClusterInfo(clusterResponse);
     } catch (error) {
       message.error('获取节点信息失败');
@@ -39,18 +46,84 @@ const ClusterNodes: React.FC = () => {
     fetchData();
   }, [id]);
 
+  const handleAddLabel = async (values: { key: string; value: string }) => {
+    if (!id || !selectedNode) return;
+    try {
+      await clusterService.updateNodeLabels(parseInt(id), selectedNode.metadata.name, {
+        ...selectedNode.metadata.labels,
+        [values.key]: values.value
+      });
+      message.success('标签添加成功');
+      setLabelModalVisible(false);
+      labelForm.resetFields();
+      fetchData();
+    } catch {
+      message.error('标签添加失败');
+    }
+  };
+
+  const handleDeleteLabel = async (nodeName: string, labelKey: string) => {
+    if (!id) return;
+    try {
+      await clusterService.deleteNodeLabel(parseInt(id), nodeName, labelKey);
+      message.success('标签删除成功');
+      fetchData();
+    } catch {
+      message.error('标签删除失败');
+    }
+  };
+
+  const handleAddTaint = async (values: { key: string; value: string; effect: string }) => {
+    if (!id || !selectedNode) return;
+    try {
+      const newTaint = {
+        key: values.key,
+        value: values.value,
+        effect: values.effect as 'NoSchedule' | 'PreferNoSchedule' | 'NoExecute'
+      };
+      const currentTaints = selectedNode.spec.taints || [];
+      await clusterService.updateNodeTaints(parseInt(id), selectedNode.metadata.name, [...currentTaints, newTaint]);
+      message.success('污点添加成功');
+      setTaintModalVisible(false);
+      taintForm.resetFields();
+      fetchData();
+    } catch {
+      message.error('污点添加失败');
+    }
+  };
+
+  const handleDeleteTaint = async (nodeName: string, taintKey: string) => {
+    if (!id) return;
+    try {
+      await clusterService.deleteNodeTaint(parseInt(id), nodeName, taintKey);
+      message.success('污点删除成功');
+      fetchData();
+    } catch {
+      message.error('污点删除失败');
+    }
+  };
+
+  const handleShowDetails = (node: NodeInfo, type: 'labels' | 'taints') => {
+    setSelectedNode(node);
+    setDetailType(type);
+    setDetailDrawerVisible(true);
+  };
+
   const columns = [
     {
       title: '节点名称',
-      dataIndex: 'name',
+      dataIndex: ['metadata', 'name'],
       key: 'name',
+      fixed: 'left' as const,
+      width: 150,
     },
     {
       title: '角色',
       key: 'role',
+      width: 100,
       render: (record: NodeInfo) => {
-        const isWorker = record.labels['node-role.kubernetes.io/WorkerNode'] === 'true';
-        const isEtcd = record.labels['node-role.kubernetes.io/etcd'] === 'true';
+        const isWorker = record.metadata.labels['node-role.kubernetes.io/WorkerNode'] === 'true';
+        const isEtcd = record.metadata.labels['node-role.kubernetes.io/etcd'] === 'true';
         let role = 'Worker';
         let color = 'blue';
         
@@ -74,10 +147,10 @@ const ClusterNodes: React.FC = () => {
     },
     {
       title: '状态',
-      dataIndex: 'status',
       key: 'status',
-      render: (status: { ready: boolean; conditions: Array<{ type: string; status: string; message: string }> }) => {
-        const readyCondition = status.conditions.find(c => c.type === 'Ready');
+      width: 100,
+      render: (record: NodeInfo) => {
+        const readyCondition = record.status.conditions.find(c => c.type === 'Ready');
         const isReady = readyCondition?.status === 'True';
         return (
           <Tag color={isReady ? 'success' : 'error'}>
@@ -87,64 +160,65 @@ const ClusterNodes: React.FC = () => {
       },
     },
     {
-      title: 'CPU 容量',
-      dataIndex: 'capacity',
-      key: 'cpu_capacity',
-      render: (capacity: Record<string, string>) => capacity['cpu'] || 'N/A',
+      title: '资源信息',
+      key: 'resources',
+      width: 200,
+      render: (record: NodeInfo) => (
+        <Space direction="vertical" size="small">
+          <Text>CPU: {record.status.capacity.cpu}</Text>
+          <Text>内存: {record.status.capacity.memory}</Text>
+          <Text>Pod: {record.status.capacity.pods}</Text>
+        </Space>
+      ),
     },
     {
-      title: '内存容量',
-      dataIndex: 'capacity',
-      key: 'memory_capacity',
-      render: (capacity: Record<string, string>) => capacity['memory'] || 'N/A',
+      title: '系统信息',
+      key: 'system',
+      width: 200,
+      render: (record: NodeInfo) => (
+        <Space direction="vertical" size="small">
+          <Text>OS: {record.status.nodeInfo.osImage}</Text>
+          <Text>K8s: {record.status.nodeInfo.kubeletVersion}</Text>
+          <Text>运行时: {record.status.nodeInfo.containerRuntimeVersion}</Text>
+        </Space>
+      ),
     },
     {
-      title: '可分配 CPU',
-      dataIndex: 'allocatable',
-      key: 'cpu_allocatable',
-      render: (allocatable: Record<string, string>) => allocatable['cpu'] || 'N/A',
+      title: '标签',
+      key: 'labels',
+      width: 120,
+      render: (record: NodeInfo) => (
+        <Button
+          type="primary"
+          icon={<TagsOutlined />}
+          onClick={() => handleShowDetails(record, 'labels')}
+        >
+          标签 ({Object.keys(record.metadata.labels).length})
+        </Button>
+      ),
     },
     {
-      title: '可分配内存',
-      dataIndex: 'allocatable',
-      key: 'memory_allocatable',
-      render: (allocatable: Record<string, string>) => allocatable['memory'] || 'N/A',
-    },
-    {
-      title: 'Pod 容量',
-      dataIndex: 'capacity',
-      key: 'pods_capacity',
-      render: (capacity: Record<string, string>) => capacity['pods'] || 'N/A',
-    },
-    {
-      title: '可分配 Pod',
-      dataIndex: 'allocatable',
-      key: 'pods_allocatable',
-      render: (allocatable: Record<string, string>) => allocatable['pods'] || 'N/A',
-    },
-    {
-      title: '节点类型',
-      key: 'type',
-      render: (record: NodeInfo) => {
-        const type = record.labels['type'] || 'N/A';
-        return <Tag color="orange">{type}</Tag>;
-      },
-    },
-    {
-      title: '区域',
-      key: 'zone',
-      render: (record: NodeInfo) => {
-        const zone = record.labels['topology.kubernetes.io/zone'] || 'N/A';
-        return <Tag color="cyan">{zone}</Tag>;
-      },
+      title: '污点',
+      key: 'taints',
+      width: 120,
+      render: (record: NodeInfo) => (
+        <Button
+          type="primary"
+          danger
+          icon={<WarningOutlined />}
+          onClick={() => handleShowDetails(record, 'taints')}
+        >
+          污点 ({record.spec.taints?.length || 0})
+        </Button>
+      ),
     },
   ];
 
   return (
-    <div>
+    <div style={{ padding: '24px' }}>
       {clusterInfo && (
         <Card title="集群信息" style={{ marginBottom: 16 }}>
-          <Descriptions column={3}>
+          <Descriptions column={{ xs: 1, sm: 2, md: 3 }} bordered>
             <Descriptions.Item label="集群名称">{clusterInfo.name}</Descriptions.Item>
             <Descriptions.Item label="中文名称">{clusterInfo.cn_name}</Descriptions.Item>
             <Descriptions.Item label="集群类型">{clusterInfo.cluster_type}</Descriptions.Item>
@@ -163,12 +237,199 @@ const ClusterNodes: React.FC = () => {
         <Table
           columns={columns}
           dataSource={nodes}
-          rowKey="name"
+          rowKey={(record) => record.metadata.name}
           loading={loading}
           pagination={false}
+          scroll={{ x: 1100 }}
           locale={{ emptyText: '暂无节点数据' }}
         />
       </Card>
+
+      {/* 标签详情抽屉 */}
+      <Drawer
+        title="节点标签详情"
+        placement="right"
+        width={600}
+        onClose={() => setDetailDrawerVisible(false)}
+        open={detailDrawerVisible && detailType === 'labels'}
+        extra={
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => {
+              setLabelModalVisible(true);
+              setDetailDrawerVisible(false);
+            }}
+          >
+            添加标签
+          </Button>
+        }
+      >
+        {selectedNode && (
+          <Space direction="vertical" style={{ width: '100%' }}>
+            {Object.entries(selectedNode.metadata.labels).map(([key, value]) => (
+              <Card key={key} size="small">
+                <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                  <Space>
+                    <Tag color="blue">{key}</Tag>
+                    <Text>{value}</Text>
+                  </Space>
+                  <Button
+                    type="text"
+                    danger
+                    icon={<DeleteOutlined />}
+                    onClick={() => handleDeleteLabel(selectedNode.metadata.name, key)}
+                  >
+                    删除
+                  </Button>
+                </Space>
+              </Card>
+            ))}
+          </Space>
+        )}
+      </Drawer>
+
+      {/* 污点详情抽屉 */}
+      <Drawer
+        title="节点污点详情"
+        placement="right"
+        width={600}
+        onClose={() => setDetailDrawerVisible(false)}
+        open={detailDrawerVisible && detailType === 'taints'}
+        extra={
+          <Button
+            type="primary"
+            danger
+            icon={<PlusOutlined />}
+            onClick={() => {
+              setTaintModalVisible(true);
+              setDetailDrawerVisible(false);
+            }}
+          >
+            添加污点
+          </Button>
+        }
+      >
+        {selectedNode && (
+          <Space direction="vertical" style={{ width: '100%' }}>
+            {selectedNode.spec.taints?.map((taint, index) => (
+              <Card key={index} size="small">
+                <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                  <Space>
+                    <Tag color="red">{taint.key}={taint.value}</Tag>
+                    <Text type="danger">{taint.effect}</Text>
+                  </Space>
+                  <Button
+                    type="text"
+                    danger
+                    icon={<DeleteOutlined />}
+                    onClick={() => handleDeleteTaint(selectedNode.metadata.name, taint.key)}
+                  >
+                    删除
+                  </Button>
+                </Space>
+              </Card>
+            ))}
+          </Space>
+        )}
+      </Drawer>
+
+      {/* 添加标签弹窗 */}
+      <Modal
+        title="添加标签"
+        open={labelModalVisible}
+        onCancel={() => {
+          setLabelModalVisible(false);
+          if (detailType === 'labels') {
+            setDetailDrawerVisible(true);
+          }
+        }}
+        footer={null}
+      >
+        <Form form={labelForm} onFinish={handleAddLabel}>
+          <Form.Item
+            name="key"
+            label="标签键"
+            rules={[{ required: true, message: '请输入标签键' }]}
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="value"
+            label="标签值"
+            rules={[{ required: true, message: '请输入标签值' }]}
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item>
+            <Button type="primary" htmlType="submit">
+              添加
+            </Button>
+            <Button onClick={() => {
+              setLabelModalVisible(false);
+              if (detailType === 'labels') {
+                setDetailDrawerVisible(true);
+              }
+            }} style={{ marginLeft: 8 }}>
+              取消
+            </Button>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* 添加污点弹窗 */}
+      <Modal
+        title="添加污点"
+        open={taintModalVisible}
+        onCancel={() => {
+          setTaintModalVisible(false);
+          if (detailType === 'taints') {
+            setDetailDrawerVisible(true);
+          }
+        }}
+        footer={null}
+      >
+        <Form form={taintForm} onFinish={handleAddTaint}>
+          <Form.Item
+            name="key"
+            label="污点键"
+            rules={[{ required: true, message: '请输入污点键' }]}
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="value"
+            label="污点值"
+            rules={[{ required: true, message: '请输入污点值' }]}
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="effect"
+            label="效果"
+            rules={[{ required: true, message: '请选择效果' }]}
+          >
+            <Select>
+              <Option value="NoSchedule">NoSchedule</Option>
+              <Option value="PreferNoSchedule">PreferNoSchedule</Option>
+              <Option value="NoExecute">NoExecute</Option>
+            </Select>
+          </Form.Item>
+          <Form.Item>
+            <Button type="primary" htmlType="submit">
+              添加
+            </Button>
+            <Button onClick={() => {
+              setTaintModalVisible(false);
+              if (detailType === 'taints') {
+                setDetailDrawerVisible(true);
+              }
+            }} style={{ marginLeft: 8 }}>
+              取消
+            </Button>
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 };

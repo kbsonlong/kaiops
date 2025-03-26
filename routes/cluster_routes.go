@@ -30,5 +30,10 @@ func SetupClusterRoutes(r *gin.Engine, db *gorm.DB) {
 
 		// 获取集群节点状态
 		clusterGroup.GET("/:id/nodes", clusterController.GetClusterNodes)
+
+		clusterGroup.PATCH(":id/nodes/:nodeName/labels", clusterController.UpdateNodeLabels)
+		clusterGroup.DELETE(":id/nodes/:nodeName/labels/:labelKey", clusterController.DeleteNodeLabel)
+		clusterGroup.PATCH(":id/nodes/:nodeName/taints", clusterController.UpdateNodeTaints)
+		clusterGroup.DELETE(":id/nodes/:nodeName/taints/:taintKey", clusterController.DeleteNodeTaint)
 	}
 }

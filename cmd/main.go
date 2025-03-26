@@ -16,7 +16,7 @@ func init() {
 }
 
 func main() {
-	docs.SwaggerInfo.Title = "Kubernetes 集群管理 API"
+	docs.SwaggerInfo.Title = "KaiOPS API"
 	docs.SwaggerInfo.Description = "这是一个用于管理 Kubernetes 集群的 API 服务"
 	docs.SwaggerInfo.Version = "1.0"
 	docs.SwaggerInfo.Host = "localhost:3000"
@@ -25,6 +25,7 @@ func main() {
 
 	r := gin.Default()
 	r.Use(middlewares.Cors())
+	r.Use(gin.Logger())
 
 	// Swagger 文档路由
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
