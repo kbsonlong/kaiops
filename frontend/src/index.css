@@ -13,6 +13,10 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  
+  /* 添加移动端触摸优化 */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 a {
@@ -89,4 +93,88 @@ button:focus-visible {
 
 .ant-descriptions-item-label {
   font-weight: 500;
+}
+
+/* 添加移动端响应式样式 */
+@media screen and (max-width: 768px) {
+  h1 {
+    font-size: 2em;
+  }
+  
+  button {
+    padding: 0.8em 1.2em; /* 增大按钮点击区域 */
+    min-height: 44px; /* 确保按钮高度符合移动端可访问性标准 */
+  }
+  
+  .ant-layout-header h1 {
+    font-size: 18px;
+  }
+  
+  .ant-card {
+    margin: 8px;
+  }
+  
+  .ant-table-wrapper {
+    overflow-x: auto; /* 表格横向滚动 */
+  }
+  
+  /* 优化移动端表单元素 */
+  .ant-input,
+  .ant-select-selector,
+  .ant-picker {
+    min-height: 44px;
+  }
+  
+  /* 优化移动端列表 */
+  .ant-list-item {
+    padding: 12px;
+  }
+  
+  /* 优化移动端导航 */
+  .ant-menu-item {
+    padding: 12px 16px;
+  }
+}
+
+/* 添加平板设备响应式样式 */
+@media screen and (min-width: 769px) and (max-width: 1024px) {
+  .ant-layout-header h1 {
+    font-size: 18px;
+  }
+  
+  .ant-card {
+    margin: 12px;
+  }
+}
+
+/* 优化触摸反馈 */
+@media (hover: none) {
+  button:active,
+  .ant-btn:active {
+    opacity: 0.7;
+  }
+  
+  a:active {
+    opacity: 0.7;
+  }
+}
+
+/* 优化滚动体验 */
+* {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 优化移动端字体大小 */
+@media screen and (max-width: 768px) {
+  html {
+    font-size: 14px;
+  }
+  
+  .ant-typography {
+    font-size: 14px;
+  }
+  
+  .ant-table {
+    font-size: 14px;
+  }
 }

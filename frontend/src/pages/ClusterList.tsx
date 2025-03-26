@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Card, Button, Space, Tag, Modal, Form, Input, Select, message } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, CloudServerOutlined } from '@ant-design/icons';
+import { Table, Card, Button, Space, Tag, Modal, Form, Input, Select, message, Dropdown } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, CloudServerOutlined, MoreOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { clusterService, Cluster } from '../services/cluster';
+import type { MenuProps } from 'antd';
 
 const { Option } = Select;
 
@@ -16,6 +17,16 @@ const ClusterList: React.FC = () => {
   const [editingCluster, setEditingCluster] = useState<Cluster | null>(null);
   const [form] = Form.useForm();
   const navigate = useNavigate();
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 768);
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const fetchClusters = async () => {
     try {
@@ -95,74 +106,89 @@ const ClusterList: React.FC = () => {
     }
   };
 
-  const columns = [
+  const getActionItems = (record: Cluster): MenuProps['items'] => [
     {
-      title: '集群名称',
-      dataIndex: 'name',
-      key: 'name',
+      key: 'nodes',
+      icon: <CloudServerOutlined />,
+      label: '节点状态',
+      onClick: () => navigate(`/clusters/${record.ID}/nodes`),
     },
     {
-      title: '中文名称',
-      dataIndex: 'cn_name',
-      key: 'cn_name',
+      key: 'edit',
+      icon: <EditOutlined />,
+      label: '编辑',
+      onClick: () => handleEdit(record),
     },
     {
-      title: '类型',
-      dataIndex: 'cluster_type',
-      key: 'cluster_type',
-      render: (text: string) => <Tag color="blue">{text}</Tag>,
-    },
-    {
-      title: '版本',
-      dataIndex: 'cluster_version',
-      key: 'cluster_version',
-    },
-    {
-      title: '区域',
-      dataIndex: 'cluster_region',
-      key: 'cluster_region',
-    },
-    {
-      title: '状态',
-      dataIndex: 'cluster_status',
-      key: 'cluster_status',
-      render: (status: boolean) => (
-        <Tag color={status ? 'success' : 'error'}>
-          {status ? '正常' : '异常'}
-        </Tag>
-      ),
-    },
-    {
-      title: '操作',
-      key: 'action',
-      render: (_: unknown, record: Cluster) => (
-        <Space size="middle">
-          <Button
-            type="link"
-            icon={<CloudServerOutlined />}
-            onClick={() => navigate(`/clusters/${record.ID}/nodes`)}
-          >
-            节点状态
-          </Button>
-          <Button
-            type="link"
-            icon={<EditOutlined />}
-            onClick={() => handleEdit(record)}
-          >
-            编辑
-          </Button>
-          <Button
-            type="link"
-            danger
-            icon={<DeleteOutlined />}
-            onClick={() => handleDelete(record.ID)}
-          >
-            删除
-          </Button>
-        </Space>
-      ),
+      key: 'delete',
+      icon: <DeleteOutlined />,
+      label: '删除',
+      danger: true,
+      onClick: () => handleDelete(record.ID),
     },
   ];
+
+  const getColumns = () => {
+    const baseColumns = [
+      {
+        title: '操作',
+        key: 'action',
+        render: (_: unknown, record: Cluster) => (
+          <Space size="middle">
+            <Dropdown menu={{ items: getActionItems(record) }} placement="bottomRight">
+              <Button type="text" icon={<MoreOutlined />} />
+            </Dropdown>
+          </Space>
+        ),
+      },
+      {
+        title: '集群名称',
+        dataIndex: 'name',
+        key: 'name',
+        ellipsis: true,
+      },
+    ];
+
+    if (!isMobile) {
+      return [
+        ...baseColumns,
+        {
+          title: '中文名称',
+          dataIndex: 'cn_name',
+          key: 'cn_name',
+          ellipsis: true,
+        },
+        {
+          title: '类型',
+          dataIndex: 'cluster_type',
+          key: 'cluster_type',
+          render: (text: string) => <Tag color="blue">{text}</Tag>,
+        },
+        {
+          title: '版本',
+          dataIndex: 'cluster_version',
+          key: 'cluster_version',
+        },
+        {
+          title: '区域',
+          dataIndex: 'cluster_region',
+          key: 'cluster_region',
+        },
+        {
+          title: '状态',
+          dataIndex: 'cluster_status',
+          key: 'cluster_status',
+          render: (status: boolean) => (
+            <Tag color={status ? 'success' : 'error'}>
+              {status ? '正常' : '异常'}
+            </Tag>
+          ),
+        },
+      ];
+    }
+
+    return baseColumns;
+  };
 
   return (
     <Card
@@ -174,7 +200,7 @@ const ClusterList: React.FC = () => {
       }
     >
       <Table
-        columns={columns}
+        columns={getColumns()}
         dataSource={clusters}
         rowKey={(record) => record.ID.toString()}
         loading={loading}
@@ -186,7 +212,11 @@ const ClusterList: React.FC = () => {
             setCurrent(page);
             setPageSize(size);
           },
+          responsive: true,
+          showSizeChanger: true,
+          showQuickJumper: true,
         }}
+        scroll={{ x: 'max-content' }}
       />
 
       <Modal
@@ -194,6 +224,8 @@ const ClusterList: React.FC = () => {
         open={modalVisible}
         onOk={handleModalOk}
         onCancel={() => setModalVisible(false)}
+        width={isMobile ? '90%' : 600}
+        style={{ top: isMobile ? 20 : 100 }}
       >
         <Form form={form} layout="vertical">
           <Form.Item

@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Card, Table, Tag, Descriptions, message, Button, Modal, Form, Input, Select, Space, Drawer, Typography } from 'antd';
-import { PlusOutlined, DeleteOutlined, TagsOutlined, WarningOutlined } from '@ant-design/icons';
+import { Card, Table, Tag, Descriptions, message, Button, Modal, Form, Input, Select, Space, Drawer, Typography, Dropdown, Badge, Tooltip, Progress } from 'antd';
+import { PlusOutlined, DeleteOutlined, TagsOutlined, WarningOutlined, MoreOutlined, InfoCircleOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import { clusterService, NodeInfo, Cluster } from '../services/cluster';
+import type { MenuProps } from 'antd';
+import type { SizeType } from 'antd/es/config-provider/SizeContext';
 
 const { Option } = Select;
-const { Text } = Typography;
+const { Text, Title } = Typography;
 
 const ClusterNodes: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -18,7 +20,27 @@ const ClusterNodes: React.FC = () => {
   const [labelForm] = Form.useForm();
   const [taintForm] = Form.useForm();
   const [detailDrawerVisible, setDetailDrawerVisible] = useState(false);
-  const [detailType, setDetailType] = useState<'labels' | 'taints'>('labels');
+  const [detailType, setDetailType] = useState<'labels' | 'taints' | 'info'>('labels');
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const [searchText, setSearchText] = useState('');
+  const [autoRefresh, setAutoRefresh] = useState(false);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 768);
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval>;
+    if (autoRefresh) {
+      timer = setInterval(fetchData, 30000); // 30秒自动刷新
+    }
+    return () => clearInterval(timer);
+  }, [autoRefresh, id]);
 
   const fetchData = async () => {
     if (!id) return;
@@ -29,7 +51,6 @@ const ClusterNodes: React.FC = () => {
         clusterService.getCluster(parseInt(id))
       ]);
       
-      console.log('Nodes Response:', nodesResponse);
       setNodes(nodesResponse);
       setClusterInfo(clusterResponse);
     } catch (error) {
@@ -103,330 +124,406 @@ const ClusterNodes: React.FC = () => {
     }
   };
 
-  const handleShowDetails = (node: NodeInfo, type: 'labels' | 'taints') => {
+  const handleShowDetails = (node: NodeInfo, type: 'labels' | 'taints' | 'info') => {
     setSelectedNode(node);
     setDetailType(type);
     setDetailDrawerVisible(true);
   };
 
-  const columns = [
+  const getActionItems = (record: NodeInfo): MenuProps['items'] => [
     {
-      title: '节点名称',
-      dataIndex: ['metadata', 'name'],
-      key: 'name',
-      fixed: 'left' as const,
-      width: 150,
+      key: 'info',
+      icon: <InfoCircleOutlined />,
+      label: '节点详情',
+      onClick: () => handleShowDetails(record, 'info'),
     },
     {
-      title: '角色',
-      key: 'role',
-      width: 100,
-      render: (record: NodeInfo) => {
-        const isWorker = record.metadata.labels['node-role.kubernetes.io/WorkerNode'] === 'true';
-        const isEtcd = record.metadata.labels['node-role.kubernetes.io/etcd'] === 'true';
-        let role = 'Worker';
-        let color = 'blue';
-        
-        if (isEtcd) {
-          role = 'Etcd';
-          color = 'purple';
-        } else if (isWorker) {
-          role = 'Worker';
-          color = 'blue';
-        } else {
-          role = 'Master';
-          color = 'red';
-        }
-        
-        return (
-          <Tag color={color}>
-            {role}
-          </Tag>
-        );
-      },
-    },
-    {
-      title: '状态',
-      key: 'status',
-      width: 100,
-      render: (record: NodeInfo) => {
-        const readyCondition = record.status.conditions.find(c => c.type === 'Ready');
-        const isReady = readyCondition?.status === 'True';
-        return (
-          <Tag color={isReady ? 'success' : 'error'}>
-            {isReady ? 'Ready' : readyCondition?.message || 'Not Ready'}
-          </Tag>
-        );
-      },
-    },
-    {
-      title: '资源信息',
-      key: 'resources',
-      width: 200,
-      render: (record: NodeInfo) => (
-        <Space direction="vertical" size="small">
-          <Text>CPU: {record.status.capacity.cpu}</Text>
-          <Text>内存: {record.status.capacity.memory}</Text>
-          <Text>Pod: {record.status.capacity.pods}</Text>
-        </Space>
-      ),
-    },
-    {
-      title: '系统信息',
-      key: 'system',
-      width: 200,
-      render: (record: NodeInfo) => (
-        <Space direction="vertical" size="small">
-          <Text>OS: {record.status.nodeInfo.osImage}</Text>
-          <Text>K8s: {record.status.nodeInfo.kubeletVersion}</Text>
-          <Text>运行时: {record.status.nodeInfo.containerRuntimeVersion}</Text>
-        </Space>
-      ),
-    },
-    {
-      title: '标签',
       key: 'labels',
-      width: 120,
-      render: (record: NodeInfo) => (
-        <Button
-          type="primary"
-          icon={<TagsOutlined />}
-          onClick={() => handleShowDetails(record, 'labels')}
-        >
-          标签 ({Object.keys(record.metadata.labels).length})
-        </Button>
-      ),
+      icon: <TagsOutlined />,
+      label: '标签管理',
+      onClick: () => handleShowDetails(record, 'labels'),
     },
     {
-      title: '污点',
       key: 'taints',
-      width: 120,
-      render: (record: NodeInfo) => (
-        <Button
-          type="primary"
-          danger
-          icon={<WarningOutlined />}
-          onClick={() => handleShowDetails(record, 'taints')}
-        >
-          污点 ({record.spec.taints?.length || 0})
-        </Button>
-      ),
+      icon: <WarningOutlined />,
+      label: '污点管理',
+      onClick: () => handleShowDetails(record, 'taints'),
     },
   ];
 
+  const getColumns = () => {
+    const baseColumns = [
+      {
+        title: '操作',
+        key: 'action',
+        fixed: 'left' as const,
+        width: isMobile ? 60 : 80,
+        render: (_: unknown, record: NodeInfo) => (
+          <Dropdown menu={{ items: getActionItems(record) }} placement="bottomRight">
+            <Button type="text" icon={<MoreOutlined />} />
+          </Dropdown>
+        ),
+      },
+      {
+        title: '节点名称',
+        dataIndex: ['metadata', 'name'],
+        key: 'name',
+        fixed: 'left' as const,
+        width: isMobile ? 120 : 150,
+        ellipsis: true,
+        render: (text: string, record: NodeInfo) => (
+          <Tooltip title={text}>
+            <Text>{text}</Text>
+          </Tooltip>
+        ),
+      },
+      {
+        title: '角色',
+        key: 'role',
+        width: isMobile ? 80 : 100,
+        render: (_: unknown, record: NodeInfo) => {
+          const isWorker = record.metadata.labels['node-role.kubernetes.io/WorkerNode'] === 'true';
+          const isEtcd = record.metadata.labels['node-role.kubernetes.io/etcd'] === 'true';
+          let role = 'Worker';
+          let color = 'blue';
+          
+          if (isEtcd) {
+            role = 'Etcd';
+            color = 'purple';
+          } else if (isWorker) {
+            role = 'Worker';
+            color = 'blue';
+          } else {
+            role = 'Master';
+            color = 'red';
+          }
+          
+          return (
+            <Tag color={color} style={{ margin: 0 }}>
+              {role}
+            </Tag>
+          );
+        },
+      },
+      {
+        title: '状态',
+        key: 'status',
+        width: isMobile ? 80 : 100,
+        render: (_: unknown, record: NodeInfo) => {
+          const readyCondition = record.status.conditions.find(c => c.type === 'Ready');
+          const isReady = readyCondition?.status === 'True';
+          return (
+            <Tag color={isReady ? 'success' : 'error'} style={{ margin: 0 }}>
+              {isReady ? 'Ready' : readyCondition?.message || 'Not Ready'}
+            </Tag>
+          );
+        },
+      },
+    ];
+
+    if (!isMobile) {
+      return [
+        ...baseColumns,
+        {
+          title: '资源信息',
+          key: 'resources',
+          width: 200,
+          render: (record: NodeInfo) => (
+            <Space direction="vertical" size="small">
+              <Progress 
+                percent={Math.round(parseInt(record.status.allocatable.cpu) / parseInt(record.status.capacity.cpu) * 100)} 
+                size="small" 
+                status="active"
+                format={(percent) => `CPU: ${record.status.allocatable.cpu}/${record.status.capacity.cpu} (${percent}%)`}
+              />
+              <Progress 
+                percent={Math.round(parseInt(record.status.allocatable.memory) / parseInt(record.status.capacity.memory) * 100)} 
+                size="small" 
+                status="active"
+                format={(percent) => `内存: ${record.status.allocatable.memory}/${record.status.capacity.memory} (${percent}%)`}
+              />
+              <Text>Pod: {record.status.allocatable.pods}/{record.status.capacity.pods}</Text>
+            </Space>
+          ),
+        },
+        {
+          title: '系统信息',
+          key: 'system',
+          width: 200,
+          render: (record: NodeInfo) => (
+            <Space direction="vertical" size="small">
+              <Text>OS: {record.status.nodeInfo.osImage}</Text>
+              <Text>K8s: {record.status.nodeInfo.kubeletVersion}</Text>
+              <Text>运行时: {record.status.nodeInfo.containerRuntimeVersion}</Text>
+            </Space>
+          ),
+        },
+      ];
+    }
+
+    return baseColumns;
+  };
+
+  const filteredNodes = nodes.filter(node => 
+    node.metadata.name.toLowerCase().includes(searchText.toLowerCase())
+  );
+
   return (
-    <div style={{ padding: '24px' }}>
+    <div style={{ padding: isMobile ? '12px' : '24px' }}>
       {clusterInfo && (
         <Card title="集群信息" style={{ marginBottom: 16 }}>
-          <Descriptions column={{ xs: 1, sm: 2, md: 3 }} bordered>
+          <Descriptions 
+            column={{ xs: 1, sm: 2, md: 3 }} 
+            bordered
+            size={isMobile ? 'small' : 'default'}
+          >
             <Descriptions.Item label="集群名称">{clusterInfo.name}</Descriptions.Item>
             <Descriptions.Item label="中文名称">{clusterInfo.cn_name}</Descriptions.Item>
             <Descriptions.Item label="集群类型">{clusterInfo.cluster_type}</Descriptions.Item>
             <Descriptions.Item label="集群版本">{clusterInfo.cluster_version}</Descriptions.Item>
             <Descriptions.Item label="区域">{clusterInfo.cluster_region}</Descriptions.Item>
             <Descriptions.Item label="状态">
-              <Tag color={clusterInfo.cluster_status ? 'success' : 'error'}>
-                {clusterInfo.cluster_status ? '正常' : '异常'}
-              </Tag>
+              <Badge status={clusterInfo.cluster_status ? 'success' : 'error'} text={clusterInfo.cluster_status ? '正常' : '异常'} />
             </Descriptions.Item>
           </Descriptions>
         </Card>
       )}
 
-      <Card title="节点列表">
+      <Card 
+        title={
+          <Space>
+            <Title level={4} style={{ margin: 0 }}>节点列表</Title>
+            <Space>
+              <Input
+                placeholder="搜索节点"
+                prefix={<SearchOutlined />}
+                value={searchText}
+                onChange={e => setSearchText(e.target.value)}
+                style={{ width: 200 }}
+              />
+              <Button 
+                icon={<ReloadOutlined />} 
+                onClick={fetchData}
+                loading={loading}
+              />
+              <Button 
+                type={autoRefresh ? 'primary' : 'default'}
+                onClick={() => setAutoRefresh(!autoRefresh)}
+                icon={<ReloadOutlined spin={autoRefresh} />}
+              >
+                {autoRefresh ? '自动刷新中' : '开启自动刷新'}
+              </Button>
+            </Space>
+          </Space>
+        }
+      >
         <Table
-          columns={columns}
-          dataSource={nodes}
+          columns={getColumns()}
+          dataSource={filteredNodes}
           rowKey={(record) => record.metadata.name}
           loading={loading}
           pagination={false}
-          scroll={{ x: 1100 }}
+          scroll={{ x: isMobile ? 500 : 1100 }}
           locale={{ emptyText: '暂无节点数据' }}
+          size={isMobile ? 'small' as SizeType : 'middle' as SizeType}
         />
       </Card>
 
-      {/* 标签详情抽屉 */}
+      {/* 详情抽屉 */}
       <Drawer
-        title="节点标签详情"
-        placement="right"
-        width={600}
-        onClose={() => setDetailDrawerVisible(false)}
-        open={detailDrawerVisible && detailType === 'labels'}
-        extra={
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => {
-              setLabelModalVisible(true);
-              setDetailDrawerVisible(false);
-            }}
-          >
-            添加标签
-          </Button>
+        title={
+          <Space>
+            <Title level={5} style={{ margin: 0 }}>
+              {selectedNode?.metadata.name}
+            </Title>
+            <Text type="secondary">
+              {detailType === 'labels' ? '标签管理' : 
+               detailType === 'taints' ? '污点管理' : '节点详情'}
+            </Text>
+          </Space>
         }
+        placement={isMobile ? 'bottom' : 'right'}
+        onClose={() => setDetailDrawerVisible(false)}
+        open={detailDrawerVisible}
+        width={isMobile ? '100%' : 600}
+        height={isMobile ? '80%' : undefined}
       >
         {selectedNode && (
-          <Space direction="vertical" style={{ width: '100%' }}>
-            {Object.entries(selectedNode.metadata.labels).map(([key, value]) => (
-              <Card key={key} size="small">
-                <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-                  <Space>
-                    <Tag color="blue">{key}</Tag>
-                    <Text>{value}</Text>
+          <div>
+            {detailType === 'info' ? (
+              <Descriptions column={1} bordered>
+                <Descriptions.Item label="节点名称">{selectedNode.metadata.name}</Descriptions.Item>
+                <Descriptions.Item label="角色">
+                  {Object.entries(selectedNode.metadata.labels)
+                    .filter(([key]) => key.startsWith('node-role.kubernetes.io/'))
+                    .map(([key, value]) => (
+                      <Tag key={key} color="blue">{key.replace('node-role.kubernetes.io/', '')}</Tag>
+                    ))}
+                </Descriptions.Item>
+                <Descriptions.Item label="状态">
+                  {selectedNode.status.conditions.map(condition => (
+                    <Tag key={condition.type} color={condition.status === 'True' ? 'success' : 'error'}>
+                      {condition.type}: {condition.status}
+                    </Tag>
+                  ))}
+                </Descriptions.Item>
+                <Descriptions.Item label="资源信息">
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <Progress 
+                      percent={Math.round(parseInt(selectedNode.status.allocatable.cpu) / parseInt(selectedNode.status.capacity.cpu) * 100)} 
+                      size="small" 
+                      status="active"
+                      format={(percent) => `CPU: ${selectedNode.status.allocatable.cpu}/${selectedNode.status.capacity.cpu} (${percent}%)`}
+                    />
+                    <Progress 
+                      percent={Math.round(parseInt(selectedNode.status.allocatable.memory) / parseInt(selectedNode.status.capacity.memory) * 100)} 
+                      size="small" 
+                      status="active"
+                      format={(percent) => `内存: ${selectedNode.status.allocatable.memory}/${selectedNode.status.capacity.memory} (${percent}%)`}
+                    />
+                    <Text>Pod: {selectedNode.status.allocatable.pods}/{selectedNode.status.capacity.pods}</Text>
                   </Space>
-                  <Button
-                    type="text"
-                    danger
-                    icon={<DeleteOutlined />}
-                    onClick={() => handleDeleteLabel(selectedNode.metadata.name, key)}
-                  >
-                    删除
-                  </Button>
+                </Descriptions.Item>
+                <Descriptions.Item label="系统信息">
+                  <Space direction="vertical">
+                    <Text>OS: {selectedNode.status.nodeInfo.osImage}</Text>
+                    <Text>K8s: {selectedNode.status.nodeInfo.kubeletVersion}</Text>
+                    <Text>运行时: {selectedNode.status.nodeInfo.containerRuntimeVersion}</Text>
+                  </Space>
+                </Descriptions.Item>
+              </Descriptions>
+            ) : detailType === 'labels' ? (
+              <div>
+                <Space direction="vertical" style={{ width: '100%' }}>
+                  {Object.entries(selectedNode.metadata.labels).map(([key, value]) => (
+                    <Card key={key} size="small">
+                      <Space>
+                        <Tag>{key}: {value}</Tag>
+                        <Button
+                          type="text"
+                          danger
+                          icon={<DeleteOutlined />}
+                          onClick={() => handleDeleteLabel(selectedNode.metadata.name, key)}
+                        />
+                      </Space>
+                    </Card>
+                  ))}
                 </Space>
-              </Card>
-            ))}
-          </Space>
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  onClick={() => {
+                    setLabelModalVisible(true);
+                    labelForm.resetFields();
+                  }}
+                  style={{ marginTop: 16 }}
+                >
+                  添加标签
+                </Button>
+              </div>
+            ) : (
+              <div>
+                <Space direction="vertical" style={{ width: '100%' }}>
+                  {selectedNode.spec.taints?.map((taint, index) => (
+                    <Card key={index} size="small">
+                      <Space>
+                        <Tag color="red">
+                          {taint.key}: {taint.value} ({taint.effect})
+                        </Tag>
+                        <Button
+                          type="text"
+                          danger
+                          icon={<DeleteOutlined />}
+                          onClick={() => handleDeleteTaint(selectedNode.metadata.name, taint.key)}
+                        />
+                      </Space>
+                    </Card>
+                  ))}
+                </Space>
+                <Button
+                  type="primary"
+                  danger
+                  icon={<PlusOutlined />}
+                  onClick={() => {
+                    setTaintModalVisible(true);
+                    taintForm.resetFields();
+                  }}
+                  style={{ marginTop: 16 }}
+                >
+                  添加污点
+                </Button>
+              </div>
+            )}
+          </div>
         )}
       </Drawer>
 
-      {/* 污点详情抽屉 */}
-      <Drawer
-        title="节点污点详情"
-        placement="right"
-        width={600}
-        onClose={() => setDetailDrawerVisible(false)}
-        open={detailDrawerVisible && detailType === 'taints'}
-        extra={
-          <Button
-            type="primary"
-            danger
-            icon={<PlusOutlined />}
-            onClick={() => {
-              setTaintModalVisible(true);
-              setDetailDrawerVisible(false);
-            }}
-          >
-            添加污点
-          </Button>
-        }
-      >
-        {selectedNode && (
-          <Space direction="vertical" style={{ width: '100%' }}>
-            {selectedNode.spec.taints?.map((taint, index) => (
-              <Card key={index} size="small">
-                <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-                  <Space>
-                    <Tag color="red">{taint.key}={taint.value}</Tag>
-                    <Text type="danger">{taint.effect}</Text>
-                  </Space>
-                  <Button
-                    type="text"
-                    danger
-                    icon={<DeleteOutlined />}
-                    onClick={() => handleDeleteTaint(selectedNode.metadata.name, taint.key)}
-                  >
-                    删除
-                  </Button>
-                </Space>
-              </Card>
-            ))}
-          </Space>
-        )}
-      </Drawer>
-
-      {/* 添加标签弹窗 */}
+      {/* 标签添加模态框 */}
       <Modal
         title="添加标签"
         open={labelModalVisible}
-        onCancel={() => {
-          setLabelModalVisible(false);
-          if (detailType === 'labels') {
-            setDetailDrawerVisible(true);
-          }
-        }}
-        footer={null}
+        onOk={() => labelForm.submit()}
+        onCancel={() => setLabelModalVisible(false)}
+        width={isMobile ? '90%' : 500}
+        style={{ top: isMobile ? 20 : 100 }}
       >
-        <Form form={labelForm} onFinish={handleAddLabel}>
+        <Form form={labelForm} onFinish={handleAddLabel} layout="vertical">
           <Form.Item
             name="key"
             label="标签键"
             rules={[{ required: true, message: '请输入标签键' }]}
+            tooltip="标签的键名"
           >
-            <Input />
+            <Input placeholder="请输入标签键" />
           </Form.Item>
           <Form.Item
             name="value"
             label="标签值"
             rules={[{ required: true, message: '请输入标签值' }]}
+            tooltip="标签的值"
           >
-            <Input />
-          </Form.Item>
-          <Form.Item>
-            <Button type="primary" htmlType="submit">
-              添加
-            </Button>
-            <Button onClick={() => {
-              setLabelModalVisible(false);
-              if (detailType === 'labels') {
-                setDetailDrawerVisible(true);
-              }
-            }} style={{ marginLeft: 8 }}>
-              取消
-            </Button>
+            <Input placeholder="请输入标签值" />
           </Form.Item>
         </Form>
       </Modal>
 
-      {/* 添加污点弹窗 */}
+      {/* 污点添加模态框 */}
       <Modal
         title="添加污点"
         open={taintModalVisible}
-        onCancel={() => {
-          setTaintModalVisible(false);
-          if (detailType === 'taints') {
-            setDetailDrawerVisible(true);
-          }
-        }}
-        footer={null}
+        onOk={() => taintForm.submit()}
+        onCancel={() => setTaintModalVisible(false)}
+        width={isMobile ? '90%' : 500}
+        style={{ top: isMobile ? 20 : 100 }}
       >
-        <Form form={taintForm} onFinish={handleAddTaint}>
+        <Form form={taintForm} onFinish={handleAddTaint} layout="vertical">
           <Form.Item
             name="key"
             label="污点键"
             rules={[{ required: true, message: '请输入污点键' }]}
+            tooltip="污点的键名"
           >
-            <Input />
+            <Input placeholder="请输入污点键" />
           </Form.Item>
           <Form.Item
             name="value"
             label="污点值"
             rules={[{ required: true, message: '请输入污点值' }]}
+            tooltip="污点的值"
           >
-            <Input />
+            <Input placeholder="请输入污点值" />
           </Form.Item>
           <Form.Item
             name="effect"
             label="效果"
             rules={[{ required: true, message: '请选择效果' }]}
+            tooltip="污点对Pod调度的影响"
           >
             <Select>
-              <Option value="NoSchedule">NoSchedule</Option>
-              <Option value="PreferNoSchedule">PreferNoSchedule</Option>
-              <Option value="NoExecute">NoExecute</Option>
+              <Option value="NoSchedule">NoSchedule - 不调度</Option>
+              <Option value="PreferNoSchedule">PreferNoSchedule - 尽量避免调度</Option>
+              <Option value="NoExecute">NoExecute - 驱逐已运行的Pod</Option>
             </Select>
-          </Form.Item>
-          <Form.Item>
-            <Button type="primary" htmlType="submit">
-              添加
-            </Button>
-            <Button onClick={() => {
-              setTaintModalVisible(false);
-              if (detailType === 'taints') {
-                setDetailDrawerVisible(true);
-              }
-            }} style={{ marginLeft: 8 }}>
-              取消
-            </Button>
           </Form.Item>
         </Form>
       </Modal>

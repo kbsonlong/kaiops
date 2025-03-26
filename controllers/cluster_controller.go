@@ -293,8 +293,10 @@ func (c *ClusterController) UpdateNodeLabels(ctx *gin.Context) {
 	nodeName := ctx.Param("nodeName")
 	fmt.Print(id, nodeName)
 
-	var labels map[string]string
-	if err := ctx.ShouldBindJSON(&labels); err != nil {
+	var request struct {
+		Labels map[string]string `json:"labels"`
+	}
+	if err := ctx.ShouldBindJSON(&request); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -312,8 +314,7 @@ func (c *ClusterController) UpdateNodeLabels(ctx *gin.Context) {
 	}
 
 	// 更新标签
-	fmt.Println(labels)
-	node.Labels = labels
+	node.Labels = request.Labels
 	_, err = clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "更新节点标签失败"})
@@ -381,9 +382,12 @@ func (c *ClusterController) DeleteNodeLabel(ctx *gin.Context) {
 func (c *ClusterController) UpdateNodeTaints(ctx *gin.Context) {
 	id := ctx.Param("id")
 	nodeName := ctx.Param("nodeName")
+	fmt.Println(id, nodeName)
 
-	var taints []corev1.Taint
-	if err := ctx.ShouldBindJSON(&taints); err != nil {
+	var request struct {
+		Taints []corev1.Taint `json:"taints"`
+	}
+	if err := ctx.ShouldBindJSON(&request); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -401,7 +405,7 @@ func (c *ClusterController) UpdateNodeTaints(ctx *gin.Context) {
 	}
 
 	// 更新污点
-	node.Spec.Taints = taints
+	node.Spec.Taints = request.Taints
 	_, err = clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "更新节点污点失败"})
