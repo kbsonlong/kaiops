@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Card, Button, Space, Tag, Modal, Form, Input, Select, message, Dropdown } from 'antd';
+import { Table, Card, Button, Space, Tag, Modal, Form, Input, Select, message, Dropdown, Badge } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, CloudServerOutlined, MoreOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { clusterService, Cluster } from '../services/cluster';
@@ -7,7 +7,7 @@ import type { MenuProps } from 'antd';
 
 const { Option } = Select;
 
-const ClusterList: React.FC = () => {
+const Clusters: React.FC = () => {
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const [loading, setLoading] = useState(false);
   const [total, setTotal] = useState(0);
@@ -108,6 +108,12 @@ const ClusterList: React.FC = () => {
 
   const getActionItems = (record: Cluster): MenuProps['items'] => [
     {
+      key: 'detail',
+      icon: <CloudServerOutlined />,
+      label: '集群详情',
+      onClick: () => navigate(`/clusters/${record.ID}`),
+    },
+    {
       key: 'nodes',
       icon: <CloudServerOutlined />,
       label: '节点状态',
@@ -133,19 +139,26 @@ const ClusterList: React.FC = () => {
       {
         title: '操作',
         key: 'action',
+        fixed: 'left' as const,
+        width: isMobile ? 60 : 80,
         render: (_: unknown, record: Cluster) => (
-          <Space size="middle">
-            <Dropdown menu={{ items: getActionItems(record) }} placement="bottomRight">
-              <Button type="text" icon={<MoreOutlined />} />
-            </Dropdown>
-          </Space>
+          <Dropdown menu={{ items: getActionItems(record) }} placement="bottomRight">
+            <Button type="text" icon={<MoreOutlined />} />
+          </Dropdown>
         ),
       },
       {
         title: '集群名称',
         dataIndex: 'name',
         key: 'name',
+        fixed: 'left' as const,
+        width: isMobile ? 120 : 150,
         ellipsis: true,
+        render: (text: string, record: Cluster) => (
+          <Button type="link" onClick={() => navigate(`/clusters/${record.ID}`)}>
+            {text}
+          </Button>
+        ),
       },
     ];
 
@@ -179,9 +192,7 @@ const ClusterList: React.FC = () => {
           dataIndex: 'cluster_status',
           key: 'cluster_status',
           render: (status: boolean) => (
-            <Tag color={status ? 'success' : 'error'}>
-              {status ? '正常' : '异常'}
-            </Tag>
+            <Badge status={status ? 'success' : 'error'} text={status ? '正常' : '异常'} />
           ),
         },
       ];
@@ -191,33 +202,37 @@ const ClusterList: React.FC = () => {
   };
 
   return (
-    <Card
-      title="集群管理"
-      extra={
-        <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-          创建集群
-        </Button>
-      }
-    >
-      <Table
-        columns={getColumns()}
-        dataSource={clusters}
-        rowKey={(record) => record.ID.toString()}
-        loading={loading}
-        pagination={{
-          total,
-          current,
-          pageSize,
-          onChange: (page, size) => {
-            setCurrent(page);
-            setPageSize(size);
-          },
-          responsive: true,
-          showSizeChanger: true,
-          showQuickJumper: true,
-        }}
-        scroll={{ x: 'max-content' }}
-      />
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <Card
+        title="集群管理"
+        extra={
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
+            创建集群
+          </Button>
+        }
+        style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
+        bodyStyle={{ flex: 1, padding: '24px', overflow: 'auto' }}
+      >
+        <Table
+          columns={getColumns()}
+          dataSource={clusters}
+          rowKey={(record) => record.ID.toString()}
+          loading={loading}
+          pagination={{
+            total,
+            current,
+            pageSize,
+            onChange: (page, size) => {
+              setCurrent(page);
+              setPageSize(size);
+            },
+            responsive: true,
+            showSizeChanger: true,
+            showQuickJumper: true,
+          }}
+          scroll={{ x: 'max-content' }}
+        />
+      </Card>
 
       <Modal
         title={editingCluster ? '编辑集群' : '创建集群'}
@@ -282,8 +297,8 @@ const ClusterList: React.FC = () => {
           </Form.Item>
         </Form>
       </Modal>
-    </Card>
+    </div>
   );
 };
 
-export default ClusterList; 
+export default Clusters; 

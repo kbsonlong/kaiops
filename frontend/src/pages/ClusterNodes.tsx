@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Card, Table, Tag, Descriptions, message, Button, Modal, Form, Input, Select, Space, Drawer, Typography, Dropdown, Badge, Tooltip, Progress } from 'antd';
 import { PlusOutlined, DeleteOutlined, TagsOutlined, WarningOutlined, MoreOutlined, InfoCircleOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
-import { clusterService, NodeInfo, Cluster } from '../services/cluster';
+import { clusterService, NodeInfo } from '../services/cluster';
 import type { MenuProps } from 'antd';
 import type { SizeType } from 'antd/es/config-provider/SizeContext';
 
@@ -13,7 +13,6 @@ const ClusterNodes: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [nodes, setNodes] = useState<NodeInfo[]>([]);
   const [loading, setLoading] = useState(false);
-  const [clusterInfo, setClusterInfo] = useState<Cluster | null>(null);
   const [labelModalVisible, setLabelModalVisible] = useState(false);
   const [taintModalVisible, setTaintModalVisible] = useState(false);
   const [selectedNode, setSelectedNode] = useState<NodeInfo | null>(null);
@@ -46,18 +45,12 @@ const ClusterNodes: React.FC = () => {
     if (!id) return;
     try {
       setLoading(true);
-      const [nodesResponse, clusterResponse] = await Promise.all([
-        clusterService.getClusterNodes(parseInt(id)),
-        clusterService.getCluster(parseInt(id))
-      ]);
-      
+      const nodesResponse = await clusterService.getClusterNodes(parseInt(id));
       setNodes(nodesResponse);
-      setClusterInfo(clusterResponse);
     } catch (error) {
       message.error('获取节点信息失败');
       console.error('Error fetching cluster data:', error);
       setNodes([]);
-      setClusterInfo(null);
     } finally {
       setLoading(false);
     }
@@ -270,25 +263,6 @@ const ClusterNodes: React.FC = () => {
 
   return (
     <div style={{ padding: isMobile ? '12px' : '24px' }}>
-      {clusterInfo && (
-        <Card title="集群信息" style={{ marginBottom: 16 }}>
-          <Descriptions 
-            column={{ xs: 1, sm: 2, md: 3 }} 
-            bordered
-            size={isMobile ? 'small' : 'default'}
-          >
-            <Descriptions.Item label="集群名称">{clusterInfo.name}</Descriptions.Item>
-            <Descriptions.Item label="中文名称">{clusterInfo.cn_name}</Descriptions.Item>
-            <Descriptions.Item label="集群类型">{clusterInfo.cluster_type}</Descriptions.Item>
-            <Descriptions.Item label="集群版本">{clusterInfo.cluster_version}</Descriptions.Item>
-            <Descriptions.Item label="区域">{clusterInfo.cluster_region}</Descriptions.Item>
-            <Descriptions.Item label="状态">
-              <Badge status={clusterInfo.cluster_status ? 'success' : 'error'} text={clusterInfo.cluster_status ? '正常' : '异常'} />
-            </Descriptions.Item>
-          </Descriptions>
-        </Card>
-      )}
-
       <Card 
         title={
           <Space>
