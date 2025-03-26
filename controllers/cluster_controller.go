@@ -1,21 +1,17 @@
 package controllers
 
 import (
-	"encoding/base64"
 	"fmt"
 	"net/http"
-	"os"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/util/homedir"
 
 	"github.com/kbsonlong/kaiops/models"
+	"github.com/kbsonlong/kaiops/utils"
 )
 
 type ClusterController struct {
@@ -45,6 +41,12 @@ func (c *ClusterController) CreateCluster(ctx *gin.Context) {
 		return
 	}
 
+	// 初始化Kubernetes客户端
+	if err := utils.InitKubernetesClient(cluster); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("初始化Kubernetes客户端失败: %v", err)})
+		return
+	}
+
 	ctx.JSON(http.StatusCreated, cluster)
 }
 
@@ -70,6 +72,22 @@ func (c *ClusterController) GetCluster(ctx *gin.Context) {
 		}
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	// 检查并初始化Kubernetes客户端
+	clusterIDUint, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的集群ID"})
+		return
+	}
+
+	_, err = utils.GetKubernetesClient(uint(clusterIDUint))
+	if err != nil {
+		// 如果客户端未初始化，则进行初始化
+		if err := utils.InitKubernetesClient(cluster); err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("初始化Kubernetes客户端失败: %v", err)})
+			return
+		}
 	}
 
 	ctx.JSON(http.StatusOK, cluster)
@@ -199,50 +217,6 @@ func (c *ClusterController) DeleteCluster(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"message": "集群删除成功"})
 }
 
-// getKubernetesClient 获取 Kubernetes 客户端
-func (c *ClusterController) getKubernetesClient(ctx *gin.Context, clusterID string) (*kubernetes.Clientset, error) {
-	// 获取集群信息
-	var cluster models.Cluster
-	if err := c.DB.First(&cluster, clusterID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			ctx.JSON(http.StatusNotFound, gin.H{"error": "集群不存在"})
-			return nil, err
-		}
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return nil, err
-	}
-
-	// 解码 base64 编码的 kubeconfig
-	kubeconfigBytes, err := base64.StdEncoding.DecodeString(cluster.KubeConfig)
-	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "kubeconfig 解码失败"})
-		return nil, err
-	}
-
-	// 创建临时 kubeconfig 文件
-	tmpKubeconfig := fmt.Sprintf("%s/.kube/config_%d", homedir.HomeDir(), cluster.ID)
-	if err := os.WriteFile(tmpKubeconfig, kubeconfigBytes, 0600); err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "创建临时 kubeconfig 文件失败"})
-		return nil, err
-	}
-	defer os.Remove(tmpKubeconfig)
-
-	// 创建 kubernetes 客户端
-	config, err := clientcmd.BuildConfigFromFlags("", tmpKubeconfig)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "创建 kubernetes 配置失败"})
-		return nil, err
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "创建 kubernetes 客户端失败"})
-		return nil, err
-	}
-
-	return clientset, nil
-}
-
 // GetClusterNodes godoc
 // @Summary      获取集群节点状态
 // @Description  通过 kubeconfig 获取集群的 WorkNode 节点状态
@@ -257,9 +231,31 @@ func (c *ClusterController) getKubernetesClient(ctx *gin.Context, clusterID stri
 func (c *ClusterController) GetClusterNodes(ctx *gin.Context) {
 	id := ctx.Param("id")
 
-	clientset, err := c.getKubernetesClient(ctx, id)
-	if err != nil {
+	// 获取集群信息
+	var cluster models.Cluster
+	if err := c.DB.First(&cluster, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "集群不存在"})
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	// 获取已初始化的客户端
+	clientset, err := utils.GetKubernetesClient(cluster.ID)
+	if err != nil {
+		// 如果客户端未初始化，则进行初始化
+		if err := utils.InitKubernetesClient(cluster); err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		// 重新获取客户端
+		clientset, err = utils.GetKubernetesClient(cluster.ID)
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	// 获取节点列表
@@ -291,7 +287,6 @@ func (c *ClusterController) GetClusterNodes(ctx *gin.Context) {
 func (c *ClusterController) UpdateNodeLabels(ctx *gin.Context) {
 	id := ctx.Param("id")
 	nodeName := ctx.Param("nodeName")
-	fmt.Print(id, nodeName)
 
 	var request struct {
 		Labels map[string]string `json:"labels"`
@@ -301,9 +296,31 @@ func (c *ClusterController) UpdateNodeLabels(ctx *gin.Context) {
 		return
 	}
 
-	clientset, err := c.getKubernetesClient(ctx, id)
-	if err != nil {
+	// 获取集群信息
+	var cluster models.Cluster
+	if err := c.DB.First(&cluster, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "集群不存在"})
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	// 获取已初始化的客户端
+	clientset, err := utils.GetKubernetesClient(cluster.ID)
+	if err != nil {
+		// 如果客户端未初始化，则进行初始化
+		if err := utils.InitKubernetesClient(cluster); err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		// 重新获取客户端
+		clientset, err = utils.GetKubernetesClient(cluster.ID)
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	// 获取节点
@@ -342,9 +359,31 @@ func (c *ClusterController) DeleteNodeLabel(ctx *gin.Context) {
 	nodeName := ctx.Param("nodeName")
 	labelKey := ctx.Param("labelKey")
 
-	clientset, err := c.getKubernetesClient(ctx, id)
-	if err != nil {
+	// 获取集群信息
+	var cluster models.Cluster
+	if err := c.DB.First(&cluster, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "集群不存在"})
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	// 获取已初始化的客户端
+	clientset, err := utils.GetKubernetesClient(cluster.ID)
+	if err != nil {
+		// 如果客户端未初始化，则进行初始化
+		if err := utils.InitKubernetesClient(cluster); err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		// 重新获取客户端
+		clientset, err = utils.GetKubernetesClient(cluster.ID)
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	// 获取节点
@@ -392,9 +431,37 @@ func (c *ClusterController) UpdateNodeTaints(ctx *gin.Context) {
 		return
 	}
 
-	clientset, err := c.getKubernetesClient(ctx, id)
+	clusterID, err := strconv.ParseUint(id, 10, 32)
 	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的集群ID"})
 		return
+	}
+
+	// 获取集群信息
+	var cluster models.Cluster
+	if err := c.DB.First(&cluster, clusterID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "集群不存在"})
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 获取已初始化的客户端
+	clientset, err := utils.GetKubernetesClient(cluster.ID)
+	if err != nil {
+		// 如果客户端未初始化，则进行初始化
+		if err := utils.InitKubernetesClient(cluster); err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		// 重新获取客户端
+		clientset, err = utils.GetKubernetesClient(cluster.ID)
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	// 获取节点
@@ -433,9 +500,37 @@ func (c *ClusterController) DeleteNodeTaint(ctx *gin.Context) {
 	nodeName := ctx.Param("nodeName")
 	taintKey := ctx.Param("taintKey")
 
-	clientset, err := c.getKubernetesClient(ctx, id)
+	clusterID, err := strconv.ParseUint(id, 10, 32)
 	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的集群ID"})
 		return
+	}
+
+	// 获取集群信息
+	var cluster models.Cluster
+	if err := c.DB.First(&cluster, clusterID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "集群不存在"})
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 获取已初始化的客户端
+	clientset, err := utils.GetKubernetesClient(cluster.ID)
+	if err != nil {
+		// 如果客户端未初始化，则进行初始化
+		if err := utils.InitKubernetesClient(cluster); err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		// 重新获取客户端
+		clientset, err = utils.GetKubernetesClient(cluster.ID)
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	// 获取节点

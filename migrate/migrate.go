@@ -12,4 +12,5 @@ func init() {
 
 func main() {
 	initializers.DB.AutoMigrate(&models.Cluster{})
+	initializers.DB.AutoMigrate(&models.Workload{})
 }

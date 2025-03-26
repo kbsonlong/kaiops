@@ -33,5 +33,8 @@ func main() {
 	// Cluster Routes
 	routes.SetupClusterRoutes(r, initializers.DB)
 
+	// Workload Routes
+	routes.SetupWorkloadRoutes(r, initializers.DB)
+
 	r.Run()
 }
