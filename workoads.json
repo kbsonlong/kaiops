@@ -1,0 +1,46 @@
+{
+    "data": [
+        {
+            "ID": 1,
+            "CreatedAt": "2025-03-27T10:10:32.181483+08:00",
+            "UpdatedAt": "2025-03-27T10:10:32.181483+08:00",
+            "DeletedAt": null,
+            "name": "test",
+            "kind": "Deployment",
+            "namespace": "default",
+            "cluster_id": 3,
+            "replicas": 0,
+            "containers": [
+                {
+                    "name": "nginx",
+                    "image": "nginx",
+                    "requests": {
+                        "cpu": "",
+                        "memory": ""
+                    },
+                    "limits": {
+                        "cpu": "",
+                        "memory": ""
+                    },
+                    "env": null,
+                    "ports": null
+                }
+            ],
+            "labels": {
+                "app": "nginx"
+            },
+            "annotations": null,
+            "status": {
+                "desired_replicas": 0,
+                "current_replicas": 0,
+                "ready_replicas": 0,
+                "conditions": null
+            }
+        }
+    ],
+    "meta": {
+        "page": 1,
+        "page_size": 10,
+        "total": 1
+    }
+}

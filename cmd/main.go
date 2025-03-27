@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+
 	"github.com/gin-gonic/gin"
 	docs "github.com/kbsonlong/kaiops/docs"
 	"github.com/kbsonlong/kaiops/initializers"
@@ -26,6 +28,8 @@ func main() {
 	r := gin.Default()
 	r.Use(middlewares.Cors())
 	r.Use(gin.Logger())
+	os.Setenv("GIN_MODE", "debug")
+	os.Getenv("PORT")
 
 	// Swagger 文档路由
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))

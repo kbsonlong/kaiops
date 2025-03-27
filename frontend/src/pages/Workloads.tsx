@@ -3,7 +3,6 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Card, Table, Tabs, Tag, Space, Button, Modal, message, Typography, Input, Select, Tooltip, Badge, Dropdown, Descriptions, Menu, Drawer } from 'antd';
 import { PlusOutlined, DeleteOutlined, EditOutlined, ReloadOutlined, SearchOutlined, InfoCircleOutlined, MoreOutlined, EyeOutlined } from '@ant-design/icons';
 import { workloadService, Workload, WorkloadList, Deployment, StatefulSet, DaemonSet } from '../services/workload';
-import { clusterService, Cluster } from '../services/cluster';
 import WorkloadForm from '../components/WorkloadForm';
 import ScaleWorkloadModal from '../components/ScaleWorkloadModal';
 import WorkloadDetail from '../components/WorkloadDetail';
@@ -16,7 +15,6 @@ const { Text } = Typography;
 
 const Workloads: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [workloads, setWorkloads] = useState<WorkloadList>({
     deployments: [],
@@ -30,6 +28,11 @@ const Workloads: React.FC = () => {
   const [scaleModalVisible, setScaleModalVisible] = useState(false);
   const [detailDrawerVisible, setDetailDrawerVisible] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const [pagination, setPagination] = useState({
+    current: 1,
+    pageSize: 10,
+    total: 0,
+  });
 
   useEffect(() => {
     const handleResize = () => {
@@ -44,13 +47,29 @@ const Workloads: React.FC = () => {
     if (id) {
       fetchWorkloads();
     }
-  }, [id]);
+  }, [id, pagination.current, pagination.pageSize, activeTab]);
 
   const fetchWorkloads = async () => {
     try {
       setLoading(true);
-      const response = await workloadService.getWorkloads(parseInt(id!));
+
+      // 直接构造查询字符串
+      // const queryParams = `page=${pagination.current}&pageSize=${pagination.pageSize}&kind=${activeTab === 'deployments' ? 'Deployment' : 
+      //   activeTab === 'statefulsets' ? 'StatefulSet' : 'DaemonSet'}`;
+      const response = await workloadService.getWorkloads(
+        parseInt(id!),
+        {
+          page: pagination.current,
+          pageSize: pagination.pageSize,
+          kind: activeTab === 'deployments' ? 'Deployment' : 
+                activeTab === 'statefulsets' ? 'StatefulSet' : 'DaemonSet'
+        }
+      );
       setWorkloads(response.data);
+      setPagination(prev => ({
+        ...prev,
+        total: response.meta.total,
+      }));
     } catch (error) {
       message.error('获取工作负载列表失败');
       console.error('Error fetching workloads:', error);
@@ -190,6 +209,12 @@ const Workloads: React.FC = () => {
     switch (workload.kind) {
       case 'Deployment':
         const deployment = workload as Deployment;
+        if (deployment.spec.replicas === 0) {
+          return {
+            color: 'default',
+            text: '待部署',
+          };
+        }
         const available = deployment.status.availableReplicas === deployment.spec.replicas;
         return {
           color: available ? 'success' : 'warning',
@@ -197,6 +222,12 @@ const Workloads: React.FC = () => {
         };
       case 'StatefulSet':
         const statefulSet = workload as StatefulSet;
+        if (statefulSet.spec.replicas === 0) {
+          return {
+            color: 'default',
+            text: '待部署',
+          };
+        }
         const ready = statefulSet.status.readyReplicas === statefulSet.spec.replicas;
         return {
           color: ready ? 'success' : 'warning',
@@ -204,6 +235,12 @@ const Workloads: React.FC = () => {
         };
       case 'DaemonSet':
         const daemonSet = workload as DaemonSet;
+        if (daemonSet.status.desiredNumberScheduled === 0) {
+          return {
+            color: 'default',
+            text: '待部署',
+          };
+        }
         const desired = daemonSet.status.desiredNumberScheduled === daemonSet.status.numberReady;
         return {
           color: desired ? 'success' : 'warning',
@@ -228,6 +265,14 @@ const Workloads: React.FC = () => {
   const filteredDaemonSets = (workloads?.daemonSets || []).filter(daemonSet =>
     daemonSet.metadata.name.toLowerCase().includes(searchText.toLowerCase())
   );
+
+  const handleTableChange = (pagination: any) => {
+    setPagination(prev => ({
+      ...prev,
+      current: pagination.current,
+      pageSize: pagination.pageSize,
+    }));
+  };
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -259,6 +304,13 @@ const Workloads: React.FC = () => {
               loading={loading}
               scroll={{ x: true }}
               size={isMobile ? 'small' : 'middle'}
+              pagination={{
+                ...pagination,
+                showSizeChanger: true,
+                showQuickJumper: true,
+                showTotal: (total) => `共 ${total} 条`,
+              }}
+              onChange={handleTableChange}
             />
           </TabPane>
           <TabPane tab="StatefulSets" key="statefulsets">
@@ -269,6 +321,13 @@ const Workloads: React.FC = () => {
               loading={loading}
               scroll={{ x: true }}
               size={isMobile ? 'small' : 'middle'}
+              pagination={{
+                ...pagination,
+                showSizeChanger: true,
+                showQuickJumper: true,
+                showTotal: (total) => `共 ${total} 条`,
+              }}
+              onChange={handleTableChange}
             />
           </TabPane>
           <TabPane tab="DaemonSets" key="daemonsets">
@@ -279,6 +338,13 @@ const Workloads: React.FC = () => {
               loading={loading}
               scroll={{ x: true }}
               size={isMobile ? 'small' : 'middle'}
+              pagination={{
+                ...pagination,
+                showSizeChanger: true,
+                showQuickJumper: true,
+                showTotal: (total) => `共 ${total} 条`,
+              }}
+              onChange={handleTableChange}
             />
           </TabPane>
         </Tabs>
@@ -309,15 +375,15 @@ const Workloads: React.FC = () => {
               } else {
                 switch (activeTab) {
                   case 'deployments':
-                    await workloadService.createDeployment(parseInt(id!), 'default', values);
+                    await workloadService.createWorkLoad(parseInt(id!), 'deployments', 'default', values);
                     message.success('创建成功');
                     break;
                   case 'statefulsets':
-                    await workloadService.createStatefulSet(parseInt(id!), 'default', values);
+                    await workloadService.createWorkLoad(parseInt(id!),'statefulsets', 'default', values);
                     message.success('创建成功');
                     break;
                   case 'daemonsets':
-                    await workloadService.createDaemonSet(parseInt(id!), 'default', values);
+                    await workloadService.createWorkLoad(parseInt(id!),'daemonsets', 'default', values);
                     message.success('创建成功');
                     break;
                 }
@@ -372,4 +438,4 @@ const Workloads: React.FC = () => {
   );
 };
 
-export default Workloads; 
+export default Workloads;

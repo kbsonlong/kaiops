@@ -136,6 +136,10 @@ export const workloadService = {
     return request.get<Workload>(`/api/v1/clusters/${clusterId}/workloads/${kind}/${namespace}/${name}`);
   },
 
+  // 创建工作负载
+  createWorkLoad: async (clusterId: number, kind: string, namespace: string, data: Partial<Deployment>) => {
+    return request.post<Deployment>(`/api/v1/clusters/${clusterId}/workloads/${kind}/${namespace}`, data);
+  },
   // 创建部署
   createDeployment: async (clusterId: number, namespace: string, data: Partial<Deployment>) => {
     return request.post<Deployment>(`/api/v1/clusters/${clusterId}/workloads/deployments/${namespace}`, data);

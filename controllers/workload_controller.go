@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -17,6 +18,27 @@ type WorkloadController struct {
 	DB *gorm.DB
 }
 
+type WorkloadRequest struct {
+	Metadata struct {
+		Name      string            `json:"name"`
+		Namespace string            `json:"namespace"`
+		Labels    map[string]string `json:"labels,omitempty"`
+	} `json:"metadata"`
+	Spec struct {
+		Template struct {
+			Spec struct {
+				Containers []models.Container `json:"containers"`
+			} `json:"spec"`
+		} `json:"template"`
+		Selector struct {
+			MatchLabels []struct {
+				Key   string `json:"key"`
+				Value string `json:"value"`
+			} `json:"matchLabels"`
+		} `json:"selector"`
+	} `json:"spec"`
+}
+
 // CreateDeployment godoc
 // @Summary      创建Deployment工作负载
 // @Description  在指定集群和命名空间中创建新的Deployment
@@ -29,21 +51,138 @@ type WorkloadController struct {
 // @Success      201 {object} models.Workload "创建成功"
 // @Failure      400 {object} map[string]string "请求参数错误"
 // @Failure      500 {object} map[string]string "服务器内部错误"
-// @Router       /api/v1/clusters/{clusterId}/workloads/deployments/{namespace} [post]
-func (w *WorkloadController) CreateDeployment(ctx *gin.Context) {
-	clusterId, _ := strconv.Atoi(ctx.Param("clusterId"))
+// @Router       /api/v1/clusters/{id}/workloads/{kind}/{namespace} [post]
+func (w *WorkloadController) CreateWorkload(ctx *gin.Context) {
+	clusterId, _ := strconv.Atoi(ctx.Param("id"))
 	namespace := ctx.Param("namespace")
+	kind := ctx.Param("kind")
 
-	var workload models.Workload
-	if err := ctx.ShouldBindJSON(&workload); err != nil {
+	// 使用全局定义的请求结构体
+	var request WorkloadRequest
+	if err := ctx.ShouldBindJSON(&request); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	// 转换为 Workload 对象
+	workload := models.Workload{
+		Kind:       kind,
+		Name:       request.Metadata.Name,
+		Namespace:  namespace,
+		ClusterID:  uint(clusterId),
+		Containers: request.Spec.Template.Spec.Containers,
+	}
+
+	// 处理 Labels
+	labels := make(map[string]string)
+	for _, label := range request.Spec.Selector.MatchLabels {
+		labels[label.Key] = label.Value
+	}
+	workload.Labels = labels
+
+	// fmt.Println(ctx.Request.Body)
+
+	// 设置工作负载类型和基本信息
+	// workload.Kind = "Deployment"
+	// workload.ClusterID = uint(clusterId)
+	// workload.Namespace = namespace
+	// fmt.Println(clusterId, namespace, workload)
+
+	// 获取集群信息
+	var cluster models.Cluster
+	if err := w.DB.First(&cluster, clusterId).Error; err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "集群不存在"})
+		return
+	}
+
+	// 初始化并获取 Kubernetes 客户端
+	if err := utils.InitKubernetesClient(cluster); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	clientset, err := utils.GetKubernetesClient(cluster.ID)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 根据工作负载类型创建资源
+	switch workload.Kind {
+	case "Deployment":
+		deployment := createDeployment(workload)
+		_, err = clientset.AppsV1().Deployments(workload.Namespace).Create(ctx, deployment, metav1.CreateOptions{})
+	case "StatefulSet":
+		statefulSet := createStatefulSet(workload)
+		_, err = clientset.AppsV1().StatefulSets(workload.Namespace).Create(ctx, statefulSet, metav1.CreateOptions{})
+	case "DaemonSet":
+		daemonSet := createDaemonSet(workload)
+		_, err = clientset.AppsV1().DaemonSets(workload.Namespace).Create(ctx, daemonSet, metav1.CreateOptions{})
+	default:
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "不支持的工作负载类型"})
+		return
+	}
+
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 保存工作负载信息到数据库
+	if err := w.DB.Create(&workload).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusCreated, workload)
+}
+
+// CreateDeployment godoc
+// @Summary      创建Deployment工作负载
+// @Description  在指定集群和命名空间中创建新的Deployment
+// @Tags         workloads
+// @Accept       json
+// @Produce      json
+// @Param        clusterId path int true "集群ID"
+// @Param        namespace path string true "命名空间"
+// @Param        deployment body models.Workload true "Deployment信息"
+// @Success      201 {object} models.Workload "创建成功"
+// @Failure      400 {object} map[string]string "请求参数错误"
+// @Failure      500 {object} map[string]string "服务器内部错误"
+// @Router       /api/v1/clusters/{id}/workloads/deployments/{namespace} [post]
+func (w *WorkloadController) CreateDeployment(ctx *gin.Context) {
+	clusterId, _ := strconv.Atoi(ctx.Param("id"))
+	namespace := ctx.Param("namespace")
+
+	// 使用全局定义的请求结构体
+	var request WorkloadRequest
+	if err := ctx.ShouldBindJSON(&request); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 转换为 Workload 对象
+	workload := models.Workload{
+		Kind:       "Deployment",
+		Name:       request.Metadata.Name,
+		Namespace:  namespace,
+		ClusterID:  uint(clusterId),
+		Containers: request.Spec.Template.Spec.Containers,
+	}
+
+	// 处理 Labels
+	labels := make(map[string]string)
+	for _, label := range request.Spec.Selector.MatchLabels {
+		labels[label.Key] = label.Value
+	}
+	workload.Labels = labels
+
+	fmt.Println(ctx.Request.Body)
 
 	// 设置工作负载类型和基本信息
 	workload.Kind = "Deployment"
 	workload.ClusterID = uint(clusterId)
 	workload.Namespace = namespace
+	fmt.Println(clusterId, namespace, workload)
 
 	// 获取集群信息
 	var cluster models.Cluster
@@ -106,9 +245,9 @@ func (w *WorkloadController) CreateDeployment(ctx *gin.Context) {
 // @Success      200 {object} models.Workload "获取成功"
 // @Failure      404 {object} map[string]string "工作负载不存在"
 // @Failure      500 {object} map[string]string "服务器内部错误"
-// @Router       /api/v1/clusters/{clusterId}/workloads/{kind}/{namespace}/{name} [get]
+// @Router       /api/v1/clusters/{id}/workloads/{kind}/{namespace}/{name} [get]
 func (w *WorkloadController) GetWorkload(ctx *gin.Context) {
-	clusterId, _ := strconv.Atoi(ctx.Param("clusterId"))
+	clusterId, _ := strconv.Atoi(ctx.Param("id"))
 	kind := ctx.Param("kind")
 	namespace := ctx.Param("namespace")
 	name := ctx.Param("name")
@@ -167,38 +306,64 @@ func (w *WorkloadController) GetWorkload(ctx *gin.Context) {
 // @Param        kind query string false "工作负载类型"
 // @Success      200 {object} map[string]interface{} "获取成功"
 // @Failure      500 {object} map[string]string "服务器内部错误"
-// @Router       /api/v1/clusters/{clusterId}/workloads [get]
+// @Router       /api/v1/clusters/{id}/workloads [get]
 func (w *WorkloadController) ListWorkloads(ctx *gin.Context) {
-	clusterId, _ := strconv.Atoi(ctx.Param("clusterId"))
+	clusterId, _ := strconv.Atoi(ctx.Param("id"))
 	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(ctx.DefaultQuery("page_size", "10"))
+	namespace := ctx.Query("namespace")
+	kind := ctx.Query("kind")
 	offset := (page - 1) * pageSize
 
-	// 构建查询条件
+	// 构建基础查询
 	query := w.DB.Model(&models.Workload{}).Where("cluster_id = ?", clusterId)
 
-	// 支持按命名空间筛选
-	if namespace := ctx.Query("namespace"); namespace != "" {
+	// 添加过滤条件
+	if namespace != "" {
 		query = query.Where("namespace = ?", namespace)
 	}
-
-	// 支持按工作负载类型筛选
-	if kind := ctx.Query("kind"); kind != "" {
+	if kind != "" {
 		query = query.Where("kind = ?", kind)
 	}
 
+	// 获取总数
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 获取分页数据
 	var workloads []models.Workload
 	if err := query.Offset(offset).Limit(pageSize).Find(&workloads).Error; err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 获取总数
-	var total int64
-	query.Count(&total)
+	// 转换为前端期望的格式
+	formattedWorkloads := convertToFrontendFormat(workloads)
+
+	// 按类型分类
+	result := map[string][]map[string]interface{}{
+		"deployments":  make([]map[string]interface{}, 0),
+		"statefulSets": make([]map[string]interface{}, 0),
+		"daemonSets":   make([]map[string]interface{}, 0),
+	}
+
+	// 将工作负载按类型分类
+	for _, w := range formattedWorkloads {
+		switch w["kind"] {
+		case "Deployment":
+			result["deployments"] = append(result["deployments"], w)
+		case "StatefulSet":
+			result["statefulSets"] = append(result["statefulSets"], w)
+		case "DaemonSet":
+			result["daemonSets"] = append(result["daemonSets"], w)
+		}
+	}
 
 	ctx.JSON(http.StatusOK, gin.H{
-		"data": workloads,
+		"data": result,
 		"meta": gin.H{
 			"total":     total,
 			"page":      page,
@@ -219,21 +384,33 @@ func (w *WorkloadController) ListWorkloads(ctx *gin.Context) {
 // @Success      201 {object} models.Workload "创建成功"
 // @Failure      400 {object} map[string]string "请求参数错误"
 // @Failure      500 {object} map[string]string "服务器内部错误"
-// @Router       /api/v1/clusters/{clusterId}/workloads/statefulsets/{namespace} [post]
+// @Router       /api/v1/clusters/{id}/workloads/statefulsets/{namespace} [post]
 func (w *WorkloadController) CreateStatefulSet(ctx *gin.Context) {
-	clusterId, _ := strconv.Atoi(ctx.Param("clusterId"))
+	clusterId, _ := strconv.Atoi(ctx.Param("id"))
 	namespace := ctx.Param("namespace")
 
-	var statefulSet models.Workload
-	if err := ctx.ShouldBindJSON(&statefulSet); err != nil {
+	// 使用全局定义的请求结构体
+	var request WorkloadRequest
+	if err := ctx.ShouldBindJSON(&request); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 设置工作负载类型和基本信息
-	statefulSet.Kind = "StatefulSet"
-	statefulSet.ClusterID = uint(clusterId)
-	statefulSet.Namespace = namespace
+	// 转换为 Workload 对象
+	statefulSet := models.Workload{
+		Kind:       "StatefulSet",
+		Name:       request.Metadata.Name,
+		Namespace:  namespace,
+		ClusterID:  uint(clusterId),
+		Containers: request.Spec.Template.Spec.Containers,
+	}
+
+	// 处理 Labels
+	labels := make(map[string]string)
+	for _, label := range request.Spec.Selector.MatchLabels {
+		labels[label.Key] = label.Value
+	}
+	statefulSet.Labels = labels
 
 	// 获取集群信息
 	var cluster models.Cluster
@@ -271,31 +448,43 @@ func (w *WorkloadController) CreateStatefulSet(ctx *gin.Context) {
 
 // CreateDaemonSet godoc
 // @Summary      创建DaemonSet工作负载
-// @Description  在指定集群和命名空间中创建新的DaemonSet
+// @Description  在指定集群和命名空间中创建新的StatefulSet
 // @Tags         workloads
 // @Accept       json
 // @Produce      json
 // @Param        clusterId path int true "集群ID"
 // @Param        namespace path string true "命名空间"
-// @Param        daemonSet body models.Workload true "DaemonSet信息"
+// @Param        statefulSet body models.Workload true "StatefulSet信息"
 // @Success      201 {object} models.Workload "创建成功"
 // @Failure      400 {object} map[string]string "请求参数错误"
 // @Failure      500 {object} map[string]string "服务器内部错误"
-// @Router       /api/v1/clusters/{clusterId}/workloads/daemonsets/{namespace} [post]
+// @Router       /api/v1/clusters/{id}/workloads/statefulsets/{namespace} [post]
 func (w *WorkloadController) CreateDaemonSet(ctx *gin.Context) {
-	clusterId, _ := strconv.Atoi(ctx.Param("clusterId"))
+	clusterId, _ := strconv.Atoi(ctx.Param("id"))
 	namespace := ctx.Param("namespace")
 
-	var daemonSet models.Workload
-	if err := ctx.ShouldBindJSON(&daemonSet); err != nil {
+	// 使用全局定义的请求结构体
+	var request WorkloadRequest
+	if err := ctx.ShouldBindJSON(&request); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 设置工作负载类型和基本信息
-	daemonSet.Kind = "DaemonSet"
-	daemonSet.ClusterID = uint(clusterId)
-	daemonSet.Namespace = namespace
+	// 转换为 Workload 对象
+	daemonSet := models.Workload{
+		Kind:       "DaemonSet",
+		Name:       request.Metadata.Name,
+		Namespace:  namespace,
+		ClusterID:  uint(clusterId),
+		Containers: request.Spec.Template.Spec.Containers,
+	}
+
+	// 处理 Labels
+	labels := make(map[string]string)
+	for _, label := range request.Spec.Selector.MatchLabels {
+		labels[label.Key] = label.Value
+	}
+	daemonSet.Labels = labels
 
 	// 获取集群信息
 	var cluster models.Cluster
@@ -346,9 +535,9 @@ func (w *WorkloadController) CreateDaemonSet(ctx *gin.Context) {
 // @Failure      400 {object} map[string]string "请求参数错误"
 // @Failure      404 {object} map[string]string "工作负载不存在"
 // @Failure      500 {object} map[string]string "服务器内部错误"
-// @Router       /api/v1/clusters/{clusterId}/workloads/{kind}/{namespace}/{name} [put]
+// @Router       /api/v1/clusters/{id}/workloads/{kind}/{namespace}/{name} [put]
 func (w *WorkloadController) UpdateWorkload(ctx *gin.Context) {
-	clusterId, _ := strconv.Atoi(ctx.Param("clusterId"))
+	clusterId, _ := strconv.Atoi(ctx.Param("id"))
 	kind := ctx.Param("kind")
 	namespace := ctx.Param("namespace")
 	name := ctx.Param("name")
@@ -375,6 +564,11 @@ func (w *WorkloadController) UpdateWorkload(ctx *gin.Context) {
 		return
 	}
 
+	// 初始化并获取 Kubernetes 客户端
+	if err := utils.InitKubernetesClient(cluster); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	// 获取工作负载状态
 	clientset, err := utils.GetKubernetesClient(cluster.ID)
 	if err != nil {
@@ -421,9 +615,9 @@ func (w *WorkloadController) UpdateWorkload(ctx *gin.Context) {
 // @Success      200 {object} map[string]string "删除成功"
 // @Failure      404 {object} map[string]string "工作负载不存在"
 // @Failure      500 {object} map[string]string "服务器内部错误"
-// @Router       /api/v1/clusters/{clusterId}/workloads/{kind}/{namespace}/{name} [delete]
+// @Router       /api/v1/clusters/{id}/workloads/{kind}/{namespace}/{name} [delete]
 func (w *WorkloadController) DeleteWorkload(ctx *gin.Context) {
-	clusterId, _ := strconv.Atoi(ctx.Param("clusterId"))
+	clusterId, _ := strconv.Atoi(ctx.Param("id"))
 	kind := ctx.Param("kind")
 	namespace := ctx.Param("namespace")
 	name := ctx.Param("name")
@@ -441,6 +635,12 @@ func (w *WorkloadController) DeleteWorkload(ctx *gin.Context) {
 	// 获取集群信息
 	var cluster models.Cluster
 	if err := w.DB.First(&cluster, workload.ClusterID).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 初始化并获取 Kubernetes 客户端
+	if err := utils.InitKubernetesClient(cluster); err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -573,9 +773,9 @@ func createDaemonSet(workload models.Workload) *appsv1.DaemonSet {
 // @Failure      400 {object} map[string]string "请求参数错误"
 // @Failure      404 {object} map[string]string "工作负载不存在"
 // @Failure      500 {object} map[string]string "服务器内部错误"
-// @Router       /api/v1/clusters/{clusterId}/workloads/{kind}/{namespace}/{name}/scale [put]
+// @Router       /api/v1/clusters/{id}/workloads/{kind}/{namespace}/{name}/scale [put]
 func (w *WorkloadController) ScaleWorkload(ctx *gin.Context) {
-	clusterId, _ := strconv.Atoi(ctx.Param("clusterId"))
+	clusterId, _ := strconv.Atoi(ctx.Param("id"))
 	kind := ctx.Param("kind")
 	namespace := ctx.Param("namespace")
 	name := ctx.Param("name")
@@ -595,7 +795,11 @@ func (w *WorkloadController) ScaleWorkload(ctx *gin.Context) {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
+	// 初始化并获取 Kubernetes 客户端
+	if err := utils.InitKubernetesClient(cluster); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	// 获取工作负载状态
 	clientset, err := utils.GetKubernetesClient(cluster.ID)
 	if err != nil {
@@ -612,12 +816,15 @@ func (w *WorkloadController) ScaleWorkload(ctx *gin.Context) {
 			return
 		}
 		replicas := int32(scaleReq.Replicas)
+		fmt.Println("缩容前副本数:", deployment.Spec.Replicas)
+
 		deployment.Spec.Replicas = &replicas
 		_, err = clientset.AppsV1().Deployments(namespace).Update(ctx, deployment, metav1.UpdateOptions{})
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+		fmt.Println("缩容后副本数:", replicas)
 	case "StatefulSet":
 		statefulSet, err := clientset.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
@@ -636,6 +843,19 @@ func (w *WorkloadController) ScaleWorkload(ctx *gin.Context) {
 		return
 	default:
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "不支持的工作负载类型"})
+		return
+	}
+
+	// 更新数据库中的副本数
+	var workload models.Workload
+	if err := w.DB.Where("cluster_id = ? AND kind = ? AND namespace = ? AND name = ?", clusterId, kind, namespace, name).First(&workload).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "更新数据库失败: " + err.Error()})
+		return
+	}
+
+	workload.Replicas = int32(scaleReq.Replicas)
+	if err := w.DB.Save(&workload).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "更新数据库失败: " + err.Error()})
 		return
 	}
 
@@ -690,4 +910,35 @@ func convertContainerPorts(ports []models.ContainerPort) []corev1.ContainerPort 
 		})
 	}
 	return k8sPorts
+}
+
+// 转换为前端期望的格式
+func convertToFrontendFormat(workloads []models.Workload) []map[string]interface{} {
+	result := make([]map[string]interface{}, len(workloads))
+	for i, w := range workloads {
+		result[i] = map[string]interface{}{
+			"kind": w.Kind,
+			"metadata": map[string]interface{}{
+				"name":      w.Name,
+				"namespace": w.Namespace,
+				"labels":    w.Labels,
+			},
+			"spec": map[string]interface{}{
+				"replicas": w.Replicas,
+				"template": map[string]interface{}{
+					"spec": map[string]interface{}{
+						"containers": w.Containers,
+					},
+				},
+			},
+			"status": map[string]interface{}{
+				"replicas":          w.Status.CurrentReplicas,
+				"availableReplicas": w.Status.ReadyReplicas,
+				"readyReplicas":     w.Status.ReadyReplicas,
+				"updatedReplicas":   w.Status.CurrentReplicas,
+				"conditions":        w.Status.Conditions,
+			},
+		}
+	}
+	return result
 }

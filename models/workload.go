@@ -4,10 +4,84 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"gorm.io/gorm"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+// Containers 是 Container 切片的自定义类型
+type Containers []Container
+
+// Value 实现 driver.Valuer 接口
+func (c Containers) Value() (driver.Value, error) {
+	if c == nil {
+		return nil, nil
+	}
+	return json.Marshal(c)
+}
+
+// Scan 实现 sql.Scanner 接口
+func (c *Containers) Scan(value interface{}) error {
+	if value == nil {
+		*c = nil
+		return nil
+	}
+
+	bytes, ok := value.([]byte)
+	if !ok {
+		return errors.New("invalid scan source")
+	}
+
+	// 尝试解析为单个容器
+	var singleContainer Container
+	if err := json.Unmarshal(bytes, &singleContainer); err == nil {
+		*c = Containers{singleContainer}
+		return nil
+	}
+
+	// 尝试解析为容器数组
+	var containers []Container
+	if err := json.Unmarshal(bytes, &containers); err == nil {
+		*c = containers
+		return nil
+	}
+
+	// 如果都失败了，返回错误
+	return fmt.Errorf("failed to unmarshal Containers: %s", string(bytes))
+}
+
+// StringMap 是 map[string]string 的自定义类型
+type StringMap map[string]string
+
+// Value 实现 driver.Valuer 接口
+func (m StringMap) Value() (driver.Value, error) {
+	if m == nil {
+		return nil, nil
+	}
+	return json.Marshal(m)
+}
+
+// Scan 实现 sql.Scanner 接口
+func (m *StringMap) Scan(value interface{}) error {
+	if value == nil {
+		*m = nil
+		return nil
+	}
+
+	bytes, ok := value.([]byte)
+	if !ok {
+		return errors.New("invalid scan source")
+	}
+
+	var temp map[string]string
+	if err := json.Unmarshal(bytes, &temp); err != nil {
+		return err
+	}
+
+	*m = temp
+	return nil
+}
 
 // Workload 表示一个 Kubernetes 工作负载
 // @Description Kubernetes 工作负载信息
@@ -24,11 +98,11 @@ type Workload struct {
 	// 副本数
 	Replicas int32 `json:"replicas" example:"3"`
 	// 容器配置
-	Containers []Container `json:"containers" gorm:"type:json"`
+	Containers Containers `json:"containers" gorm:"type:json"`
 	// 标签
-	Labels map[string]string `json:"labels" gorm:"type:json"`
+	Labels StringMap `json:"labels" gorm:"type:json"`
 	// 注解
-	Annotations map[string]string `json:"annotations" gorm:"type:json"`
+	Annotations StringMap `json:"annotations" gorm:"type:json"`
 	// 工作负载状态
 	Status WorkloadStatus `json:"status" gorm:"type:json"`
 }

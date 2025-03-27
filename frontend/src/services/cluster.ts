@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://192.168.1.5:3000/api/v1';
+const API_BASE_URL = 'http://localhost:3000/api/v1';
 
 export interface Cluster {
   ID: number;

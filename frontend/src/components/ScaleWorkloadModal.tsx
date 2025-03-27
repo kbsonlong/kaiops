@@ -61,11 +61,11 @@ const ScaleWorkloadModal: React.FC<ScaleWorkloadModalProps> = ({
           label="副本数"
           rules={[
             { required: true, message: '请输入副本数' },
-            { type: 'number', min: 1, message: '副本数必须大于0' }
+            { type: 'number', min: 0, message: '副本数必须大于等于0' }
           ]}
         >
           <InputNumber
-            min={1}
+            min={0}
             style={{ width: '100%' }}
             placeholder="请输入副本数"
           />
@@ -75,4 +75,4 @@ const ScaleWorkloadModal: React.FC<ScaleWorkloadModalProps> = ({
   );
 };
 
-export default ScaleWorkloadModal; 
+export default ScaleWorkloadModal;
